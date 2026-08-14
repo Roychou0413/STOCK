@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>倉庫盤點掃描</title>
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     :root{
       --bg:#f3f4f6; --surface:#ffffff; --text:#1a1d23; --muted:#6b7280;
@@ -25,6 +26,18 @@
     .hint{text-align:center;color:var(--muted);font-size:13.5px;min-height:20px;margin:8px 2px;}
     .warn{background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;padding:10px 12px;border-radius:12px;
       font-size:13px;margin:0 0 12px;text-align:center;}
+
+    /* 手動搜尋 */
+    .search-box{display:flex;gap:8px;margin:12px 0 4px;}
+    .search-box input{flex:1;min-width:0;font-size:15px;padding:12px;border-radius:12px;
+      border:1.5px solid var(--border);background:#fff;color:var(--text);}
+    .search-box button{flex:0 0 auto;width:84px;}
+    #searchResults{margin:2px 0;}
+    .sr-hint{color:var(--muted);font-size:13px;text-align:center;padding:10px;}
+    .sr-item{display:block;width:100%;text-align:left;background:var(--surface);border:1px solid var(--border);
+      border-radius:12px;padding:11px 13px;margin-bottom:8px;color:var(--text);}
+    .sr-name{font-size:15px;font-weight:700;}
+    .sr-meta{font-size:12px;color:var(--muted);font-weight:400;margin-top:2px;}
 
     .overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;
       align-items:flex-end;justify-content:center;z-index:50;}
@@ -57,7 +70,12 @@
       padding:13px 18px;border-radius:14px;font-size:14px;font-weight:600;opacity:0;transition:.25s;
       z-index:100;max-width:92%;text-align:center;border-left:5px solid var(--muted);box-shadow:0 6px 20px rgba(0,0,0,.25);}
     #toast.show{opacity:1;} #toast.ok{border-left-color:var(--ok);} #toast.err{border-left-color:var(--danger);}
-    .hist h3{font-size:14px;color:var(--muted);margin:20px 0 10px;font-weight:700;}
+
+    .hist-head{display:flex;align-items:center;justify-content:space-between;margin:22px 0 10px;gap:8px;}
+    .hist-head h3{margin:0;font-size:14px;color:var(--muted);font-weight:700;}
+    .hist-actions{display:flex;gap:8px;}
+    button.mini{flex:0 0 auto;font-size:13px;padding:8px 12px;border-radius:10px;background:var(--ok);}
+    button.mini.ghost{background:var(--surface);color:var(--text);border:1.5px solid var(--border);}
     .hi{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 13px;margin-bottom:9px;
       display:flex;justify-content:space-between;gap:10px;align-items:center;}
     .hi .n{font-weight:700;font-size:15px;} .hi .m{color:var(--muted);font-size:12px;margin-top:2px;}
@@ -82,10 +100,20 @@
   </div>
   <div class="hint" id="hint">按「開始掃描」並允許使用相機</div>
 
-  <div class="hist">
-    <h3>本次盤點紀錄</h3>
-    <div id="histList"><div class="empty">尚無紀錄，掃描後會顯示在這裡</div></div>
+  <div class="search-box">
+    <input id="searchInput" type="search" enterkeyhint="search" placeholder="沒有條碼?輸入品名或型號搜尋">
+    <button id="searchBtn" onclick="doSearch()">搜尋</button>
   </div>
+  <div id="searchResults"></div>
+
+  <div class="hist-head">
+    <h3>本次盤點紀錄</h3>
+    <div class="hist-actions">
+      <button class="mini" onclick="exportExcel()">匯出 Excel</button>
+      <button class="mini ghost" onclick="clearHist()">清空</button>
+    </div>
+  </div>
+  <div id="histList"><div class="empty">尚無紀錄，掃描或搜尋後會顯示在這裡</div></div>
 
   <div class="overlay" id="overlay">
     <div class="sheet">
@@ -116,24 +144,27 @@
 
   <script>
     // ===================== 設定 =====================
-    // 貼上你的 Apps Script 網頁應用程式網址（結尾 /exec）
     const API_URL = 'https://script.google.com/macros/s/AKfycbyDoDXGFHmjzepsHj0d47j0i3kyPROqgu2O9XNCgmFAdjxAQQ-vF4-SinodmJ7_7AgKOw/exec';
-    // 若後端有設 API_TOKEN，這裡填相同的值；沒有就留空
     const API_TOKEN = '';
     // ==============================================
 
-    // ---- 呼叫後端 ----
     async function apiLookup(barcode){
       const u = API_URL + '?action=lookup&barcode=' + encodeURIComponent(barcode)
               + (API_TOKEN ? '&token=' + encodeURIComponent(API_TOKEN) : '');
       const res = await fetch(u);
       return await res.json();
     }
-    async function apiSave(barcode, status, qty, mode){
+    async function apiSearch(q){
+      const u = API_URL + '?action=search&q=' + encodeURIComponent(q)
+              + (API_TOKEN ? '&token=' + encodeURIComponent(API_TOKEN) : '');
+      const res = await fetch(u);
+      return await res.json();
+    }
+    async function apiSave(item, status, qty, mode){
       const res = await fetch(API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // text/plain 避免 CORS 預檢
-        body: JSON.stringify({ action:'save', barcode, status, qty, mode, token: API_TOKEN })
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action:'save', barcode:item.barcode||'', row:item.row, status, qty, mode, token: API_TOKEN })
       });
       return await res.json();
     }
@@ -147,6 +178,7 @@
     let qr=null, scanning=false, product=null;
     let status='新品', mode='add';
     let last={code:null,at:0};
+    let searchResults=[];
 
     if(!API_URL || API_URL.indexOf('PASTE_YOUR_EXEC_URL') === 0){
       document.getElementById('cfgWarn').style.display='block';
@@ -181,6 +213,7 @@
       i.value=Math.max(0,(parseInt(i.value,10)||0)+d);}
     function setHint(t,spin){document.getElementById('hint').innerHTML=(spin?'<span class="spin"></span>':'')+t;}
 
+    // ---- 掃描 ----
     async function startScan(){
       if(scanning) return;
       if(!qr) qr=new Html5Qrcode('reader',{verbose:false});
@@ -203,26 +236,55 @@
       scanning=false; startBtn.disabled=false; stopBtn.disabled=true;
       setHint('已停止掃描');
     }
-
     function onScan(text){
       const now=Date.now();
       if(text===last.code && now-last.at<2500) return;
       last={code:text,at:now};
       if(qr){try{qr.pause(true);}catch(e){}}
       setHint('查詢商品中…',true);
-      apiLookup(text).then(onFound).catch(err=>{setHint('查詢失敗：'+err.message);resume();});
+      apiLookup(text).then(res=>{
+        if(!res || res.error){ toast(res && res.error ? res.error : '查詢失敗','err'); setHint('請繼續掃描'); resume(); return; }
+        if(!res.found){ toast('找不到條碼 '+res.barcode,'err'); setHint('查無此條碼，可改用下方搜尋'); resume(); return; }
+        openProduct(res);
+      }).catch(err=>{setHint('查詢失敗：'+err.message);resume();});
     }
 
-    function onFound(res){
-      if(!res || res.error){ toast(res && res.error ? res.error : '查詢失敗','err'); setHint('請繼續掃描'); resume(); return; }
-      if(!res.found){
-        toast('找不到條碼 '+res.barcode,'err');
-        setHint('表中查無此條碼，請繼續掃描'); resume(); return;
-      }
+    // ---- 手動搜尋 ----
+    document.getElementById('searchInput').addEventListener('keydown', function(e){
+      if(e.key==='Enter'){ e.preventDefault(); doSearch(); this.blur(); }
+    });
+    function doSearch(){
+      const q = document.getElementById('searchInput').value.trim();
+      const box = document.getElementById('searchResults');
+      if(!q){ box.innerHTML=''; return; }
+      box.innerHTML = '<div class="sr-hint"><span class="spin"></span>搜尋中…</div>';
+      apiSearch(q).then(r=>{
+        if(!r || r.error){ box.innerHTML='<div class="sr-hint">搜尋失敗：'+((r&&r.error)||'')+'</div>'; return; }
+        searchResults = r.results || [];
+        if(!searchResults.length){ box.innerHTML='<div class="sr-hint">找不到符合「'+esc(q)+'」的商品</div>'; return; }
+        box.innerHTML = searchResults.map((it,idx)=>
+          '<button class="sr-item" onclick="pickResult('+idx+')">'
+          +'<div class="sr-name">'+esc(it.name||'(未命名)')+'</div>'
+          +'<div class="sr-meta">'+(it.model?('型號 '+esc(it.model)):'')
+          +(it.barcode?('　·　條碼 '+esc(it.barcode)):'　·　無條碼')+'　·　第 '+it.row+' 列</div>'
+          +'</button>'
+        ).join('');
+      }).catch(err=>{ box.innerHTML='<div class="sr-hint">搜尋失敗：'+err.message+'</div>'; });
+    }
+    function pickResult(idx){
+      const it = searchResults[idx];
+      if(!it) return;
+      document.getElementById('searchResults').innerHTML='';
+      document.getElementById('searchInput').value='';
+      openProduct(it);
+    }
+
+    // ---- 共用：開啟填寫視窗 ----
+    function openProduct(res){
       product=res;
       mName.textContent = res.name || '(未命名商品)';
       mModel.textContent = res.model ? ('型號：'+res.model) : '';
-      mBarcode.textContent = '條碼 '+res.barcode+'　·　第 '+res.row+' 列';
+      mBarcode.textContent = (res.barcode ? ('條碼 '+res.barcode) : '無條碼') + '　·　第 '+res.row+' 列';
       STATUS_META.forEach(s=>{
         const el=document.getElementById('cur-'+s.name);
         if(el) el.textContent='目前 '+(res.quantities[s.name]??0);
@@ -231,7 +293,6 @@
       overlay.classList.add('show');
       setHint('填寫數量與狀態');
     }
-
     function resume(){if(qr&&scanning){try{qr.resume();}catch(e){}}}
     function closeModal(){overlay.classList.remove('show');product=null;resume();setHint('將條碼對準取景框');}
 
@@ -241,7 +302,7 @@
       if(isNaN(qty)||qty<0){toast('請輸入有效數量','err');return;}
       saveBtn.disabled=true; saveBtn.textContent='儲存中…';
       const p=product;
-      apiSave(p.barcode,status,qty,mode).then(r=>{
+      apiSave(p,status,qty,mode).then(r=>{
         saveBtn.disabled=false; saveBtn.textContent='存入表單';
         if(r && r.ok){
           toast('✓ '+(p.name||p.barcode)+'　'+r.status+' '+(r.mode==='set'?'設為 ':'+')+r.added+' → '+r.newValue,'ok');
@@ -251,11 +312,24 @@
       }).catch(err=>{ saveBtn.disabled=false; saveBtn.textContent='存入表單'; toast('儲存失敗：'+err.message,'err'); });
     }
 
+    // ---- 本次紀錄（存 localStorage，避免不小心重整就消失）----
+    const HIST_KEY='stocktake_hist_v1';
     let hist=[];
-    function addHist(p,r){hist.unshift({name:p.name||p.barcode,status:r.status,added:r.added,newVal:r.newValue,mode:r.mode,t:new Date()});renderHist();}
+    loadHist(); renderHist();
+
+    function loadHist(){
+      try{ const raw=localStorage.getItem(HIST_KEY);
+        if(raw){ hist=JSON.parse(raw).map(h=>({...h, t:new Date(h.t)})); } }catch(e){ hist=[]; }
+    }
+    function saveHistLS(){ try{ localStorage.setItem(HIST_KEY, JSON.stringify(hist)); }catch(e){} }
+    function addHist(p,r){
+      hist.unshift({ name:p.name||p.barcode||'', model:p.model||'', barcode:p.barcode||'', row:r.row,
+        status:r.status, added:r.added, newVal:r.newValue, mode:r.mode, t:new Date() });
+      saveHistLS(); renderHist();
+    }
     function renderHist(){
       const box=document.getElementById('histList');
-      if(!hist.length){box.innerHTML='<div class="empty">尚無紀錄，掃描後會顯示在這裡</div>';return;}
+      if(!hist.length){box.innerHTML='<div class="empty">尚無紀錄，掃描或搜尋後會顯示在這裡</div>';return;}
       box.innerHTML=hist.map(h=>{
         const t=h.t.toLocaleTimeString('zh-TW',{hour12:false});
         const c=meta(h.status).color;
@@ -264,8 +338,39 @@
           +'<div class="q" style="color:'+c+'">'+(h.mode==='set'?'=':'+')+h.added+' → '+h.newVal+'</div></div>';
       }).join('');
     }
-    function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+    function clearHist(){
+      if(!hist.length) return;
+      if(!confirm('確定清空本次盤點紀錄?（不影響已存入表單的數字）')) return;
+      hist=[]; saveHistLS(); renderHist();
+    }
 
+    // ---- 匯出 Excel ----
+    function exportExcel(){
+      if(!hist.length){ toast('目前沒有紀錄可匯出','err'); return; }
+      const rows = hist.slice().reverse().map(h=>({
+        '時間': h.t.toLocaleString('zh-TW',{hour12:false}),
+        '品名': h.name,
+        '型號': h.model,
+        '國際條碼': h.barcode,
+        '狀態': h.status,
+        '本次數量': h.added,
+        '寫入方式': h.mode==='set'?'覆蓋':'累加',
+        '寫入後數量': h.newVal,
+        '試算表列': h.row
+      }));
+      try{
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws['!cols'] = [{wch:19},{wch:24},{wch:16},{wch:16},{wch:8},{wch:9},{wch:9},{wch:11},{wch:9}];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, '盤點紀錄');
+        const n=new Date(), pad=x=>String(x).padStart(2,'0');
+        const fname='盤點紀錄_'+n.getFullYear()+pad(n.getMonth()+1)+pad(n.getDate())+'_'+pad(n.getHours())+pad(n.getMinutes())+'.xlsx';
+        XLSX.writeFile(wb, fname);
+        toast('已匯出 '+rows.length+' 筆，請至「檔案」App 查看','ok');
+      }catch(e){ toast('匯出失敗：'+e.message,'err'); }
+    }
+
+    function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
     let tt=null;
     function toast(msg,type){const el=document.getElementById('toast');el.textContent=msg;
       el.className='show '+(type||'');clearTimeout(tt);
