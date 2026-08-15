@@ -174,25 +174,36 @@
       if(typeof Html5Qrcode==='undefined') loadScript(QR_LIBS).catch(()=>{});
     });
 
+    // ---- 帶逾時的 fetch（避免卡住時無限轉圈）----
+    async function fetchJSON(url, opts, timeoutMs){
+      timeoutMs = timeoutMs || 20000;
+      const ctrl = new AbortController();
+      const timer = setTimeout(()=>ctrl.abort(), timeoutMs);
+      try{
+        const res = await fetch(url, Object.assign({signal: ctrl.signal}, opts||{}));
+        return await res.json();
+      }catch(e){
+        if(e && e.name==='AbortError') throw new Error('連線逾時（20 秒沒有回應，通常是部署權限或網址問題）');
+        throw e;
+      }finally{ clearTimeout(timer); }
+    }
+
     async function apiLookup(barcode){
       const u = API_URL + '?action=lookup&barcode=' + encodeURIComponent(barcode)
               + (API_TOKEN ? '&token=' + encodeURIComponent(API_TOKEN) : '');
-      const res = await fetch(u);
-      return await res.json();
+      return await fetchJSON(u);
     }
     async function apiSearch(q){
       const u = API_URL + '?action=search&q=' + encodeURIComponent(q)
               + (API_TOKEN ? '&token=' + encodeURIComponent(API_TOKEN) : '');
-      const res = await fetch(u);
-      return await res.json();
+      return await fetchJSON(u);
     }
     async function apiSave(item, status, qty, mode){
-      const res = await fetch(API_URL, {
+      return await fetchJSON(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ action:'save', barcode:item.barcode||'', row:item.row, status, qty, mode, token: API_TOKEN })
       });
-      return await res.json();
     }
 
     const STATUS_META = [
