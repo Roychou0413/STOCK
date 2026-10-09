@@ -67,7 +67,7 @@
     .actions .save{background:var(--ok);flex:1;}
     #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:#fff;
       padding:13px 18px;border-radius:14px;font-size:14px;font-weight:600;opacity:0;transition:.25s;
-      z-index:100;max-width:92%;text-align:center;border-left:5px solid var(--muted);box-shadow:0 6px 20px rgba(0,0,0,.25);}
+      z-index:100;max-width:92%;text-align:center;pointer-events:none;border-left:5px solid var(--muted);box-shadow:0 6px 20px rgba(0,0,0,.25);}
     #toast.show{opacity:1;} #toast.ok{border-left-color:var(--ok);} #toast.err{border-left-color:var(--danger);}
 
     .hist-head{display:flex;align-items:center;justify-content:space-between;margin:22px 0 10px;gap:8px;}
@@ -102,6 +102,20 @@
     .li-name{font-size:14.5px;font-weight:700;line-height:1.3;}
     .li-meta{font-size:11.5px;color:var(--muted);margin-top:2px;font-family:ui-monospace,monospace;}
     .li-qty{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:6px;font-size:12.5px;font-weight:700;}
+    /* 手電筒 */
+    #torchBtn{flex:0 0 auto;width:62px;font-size:20px;padding:0;}
+    #torchBtn.on{background:#fde68a;border-color:#f59e0b;color:#92400e;}
+    /* 離線待上傳 */
+    .queue-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fffbeb;
+      border:1px solid #fde68a;color:#92400e;padding:9px 12px;border-radius:12px;font-size:13.5px;font-weight:600;margin:6px 0;}
+    .queue-bar button.mini{background:#d97706;}
+    /* 本次紀錄：撤銷 / 狀態 */
+    .hi .r{display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
+    .hi .undo{flex:0 0 auto;font-size:12px;padding:5px 10px;border-radius:8px;background:var(--surface);
+      color:var(--text);border:1.5px solid var(--border);font-weight:600;}
+    .hi.undone{opacity:.5;} .hi.undone .n,.hi.undone .q{text-decoration:line-through;}
+    .hi .tag{font-weight:700;margin-left:4px;}
+    .hi .tag.pending{color:#d97706;} .hi .tag.bad{color:var(--danger);} .hi .tag.undone{color:var(--muted);}
   </style>
 </head>
 <body>
@@ -113,8 +127,13 @@
   <div class="controls">
     <button id="startBtn" onclick="startScan()">開始掃描</button>
     <button id="stopBtn" class="ghost" onclick="stopScan()" disabled>停止</button>
+    <button id="torchBtn" class="ghost" onclick="toggleTorch()" style="display:none" title="手電筒">🔦</button>
   </div>
   <div class="hint" id="hint">按「開始掃描」並允許使用相機</div>
+  <div id="queueBar" class="queue-bar" style="display:none">
+    <span id="queueText"></span>
+    <button class="mini" onclick="flushQueue()">立即上傳</button>
+  </div>
 
   <div class="search-box">
     <input id="searchInput" type="search" enterkeyhint="search" placeholder="沒有條碼?輸入品名或型號搜尋">
@@ -284,6 +303,7 @@
     // ---- 掃描 ----
     async function startScan(){
       if(scanning) return;
+      initAudio();
       if(typeof Html5Qrcode==='undefined'){
         setHint('載入相機元件中…',true);
         try{ await loadScript(QR_LIBS); }catch(e){ setHint('相機元件載入失敗，請檢查網路後重試'); return; }
@@ -299,6 +319,7 @@
       try{
         await qr.start({facingMode:'environment'},cfg,onScan,()=>{});
         scanning=true; startBtn.disabled=true; stopBtn.disabled=false;
+        setupTorch();
         setHint('將條碼對準取景框');
       }catch(e){setHint('無法啟動相機：'+e);}
     }
@@ -306,6 +327,7 @@
       if(!scanning||!qr) return;
       try{await qr.stop();}catch(e){}
       scanning=false; startBtn.disabled=false; stopBtn.disabled=true;
+      torchOn=false; paintTorch(); torchBtn.style.display='none';
       setHint('已停止掃描');
     }
     function onScan(text){
@@ -313,12 +335,54 @@
       if(text===last.code && now-last.at<2500) return;
       last={code:text,at:now};
       if(qr){try{qr.pause(true);}catch(e){}}
+      feedback('scan');
       setHint('查詢商品中…',true);
       apiLookup(text).then(res=>{
-        if(!res || res.error){ toast(res && res.error ? res.error : '查詢失敗','err'); setHint('請繼續掃描'); resume(); return; }
-        if(!res.found){ toast('找不到條碼 '+res.barcode,'err'); setHint('查無此條碼，可改用下方搜尋'); resume(); return; }
+        if(!res || res.error){ feedback('err'); toast(res && res.error ? res.error : '查詢失敗','err'); setHint('請繼續掃描'); resume(); return; }
+        if(!res.found){ feedback('err'); toast('找不到條碼 '+res.barcode,'err'); setHint('查無此條碼，可改用下方搜尋'); resume(); return; }
         openProduct(res);
-      }).catch(err=>{setHint('查詢失敗：'+err.message);resume();});
+      }).catch(err=>{feedback('err');setHint('查詢失敗：'+err.message);resume();});
+    }
+
+    // ---- 手電筒（僅部分 Android 瀏覽器支援；不支援時不顯示按鈕）----
+    let torchOn=false;
+    function setupTorch(){
+      torchOn=false; paintTorch();
+      let ok=false;
+      try{ const caps=qr.getRunningTrackCapabilities(); ok=!!(caps && caps.torch); }catch(e){}
+      torchBtn.style.display = ok ? '' : 'none';
+    }
+    function paintTorch(){ torchBtn.classList.toggle('on', torchOn); }
+    async function toggleTorch(){
+      if(!qr||!scanning) return;
+      const want=!torchOn;
+      try{ await qr.applyVideoConstraints({advanced:[{torch:want}]}); torchOn=want; paintTorch(); }
+      catch(e){ toast('無法切換手電筒','err'); }
+    }
+
+    // ---- 提示音與震動（iPhone 不支援震動，會只有聲音）----
+    let audioCtx=null;
+    function initAudio(){   // 必須在使用者點擊時呼叫，瀏覽器才允許出聲
+      try{
+        if(!audioCtx){ const AC=window.AudioContext||window.webkitAudioContext; if(AC) audioCtx=new AC(); }
+        if(audioCtx && audioCtx.state==='suspended') audioCtx.resume();
+      }catch(e){}
+    }
+    function beep(freq,ms,delay){
+      if(!audioCtx) return;
+      try{
+        const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+        o.type='square'; o.frequency.value=freq; g.gain.value=0.06;
+        o.connect(g); g.connect(audioCtx.destination);
+        const t=audioCtx.currentTime+(delay||0)/1000;
+        o.start(t); o.stop(t+ms/1000);
+      }catch(e){}
+    }
+    function vib(p){ try{ if(navigator.vibrate) navigator.vibrate(p); }catch(e){} }
+    function feedback(kind){
+      if(kind==='scan'){ beep(1800,80); vib(60); }
+      else if(kind==='ok'){ beep(1200,70); beep(1700,90,90); vib(40); }
+      else { beep(260,240); vib([120,80,120]); }
     }
 
     // ---- 手動搜尋 ----
@@ -409,51 +473,180 @@
     function resume(){if(qr&&scanning){try{qr.resume();}catch(e){}}}
     function closeModal(){overlay.classList.remove('show');product=null;resume();setHint('將條碼對準取景框');}
 
+    function finishModal(){ overlay.classList.remove('show'); product=null; resume(); setHint('將條碼對準取景框'); }
+    function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+    // 只有「請求根本沒送出去」才算網路錯誤，可安全暫存重送；逾時可能已寫入，不自動重送以免重複累加
+    function isNetErr(e){ return !navigator.onLine || (e && e.name==='TypeError'); }
+
     function save(){
       if(!product) return;
+      initAudio();
       const qty=parseInt(qtyInput.value,10);
       if(isNaN(qty)||qty<0){toast('請輸入有效數量','err');return;}
-      saveBtn.disabled=true; saveBtn.textContent='儲存中…';
       const p=product;
-      apiSave(p,status,qty,mode).then(r=>{
+      const job={ id:uid(), item:{barcode:p.barcode||'', row:p.row}, name:p.name||p.barcode||'', model:p.model||'',
+        status, qty, mode, prev:(p.quantities && p.quantities[status]) ?? 0, t:Date.now() };
+      // 已有待上傳的資料時，新的也排在後面，確保寫入順序正確
+      if(queue.length){
+        enqueue(job); feedback('ok'); toast('已加入待上傳（共 '+queue.length+' 筆）','ok');
+        finishModal(); flushQueue(); return;
+      }
+      saveBtn.disabled=true; saveBtn.textContent='儲存中…';
+      apiSave(job.item,status,qty,mode).then(r=>{
         saveBtn.disabled=false; saveBtn.textContent='存入表單';
         if(r && r.ok){
-          toast('✓ '+(p.name||p.barcode)+'　'+r.status+' '+(r.mode==='set'?'設為 ':'+')+r.added+' → '+r.newValue,'ok');
-          addHist(p,r);
-          overlay.classList.remove('show'); product=null; resume(); setHint('將條碼對準取景框');
-        }else{ toast((r&&(r.message||r.error))||'儲存失敗','err'); }
-      }).catch(err=>{ saveBtn.disabled=false; saveBtn.textContent='存入表單'; toast('儲存失敗：'+err.message,'err'); });
+          feedback('ok');
+          toast('✓ '+job.name+'　'+r.status+' '+(r.mode==='set'?'設為 ':'+')+r.added+' → '+r.newValue,'ok');
+          addHist(job,r);
+          finishModal();
+        }else{ feedback('err'); toast((r&&(r.message||r.error))||'儲存失敗','err'); }
+      }).catch(err=>{
+        saveBtn.disabled=false; saveBtn.textContent='存入表單';
+        if(isNetErr(err)){
+          enqueue(job); feedback('ok');
+          toast('網路不通，已暫存，恢復連線後自動上傳','ok');
+          finishModal();
+        }else{
+          feedback('err');
+          toast('儲存失敗：'+err.message+'（可能已寫入，請重新查詢確認數量）','err');
+        }
+      });
     }
 
     // ---- 本次紀錄（存 localStorage，避免不小心重整就消失）----
     const HIST_KEY='stocktake_hist_v1';
     let hist=[];
-    loadHist(); renderHist();
+    // ---- 離線待上傳佇列 ----
+    const QUEUE_KEY='stocktake_queue_v1';
+    let queue=[], flushing=false;
+    loadHist(); loadQueue(); renderHist(); renderQueue();
 
     function loadHist(){
       try{ const raw=localStorage.getItem(HIST_KEY);
-        if(raw){ hist=JSON.parse(raw).map(h=>({...h, t:new Date(h.t)})); } }catch(e){ hist=[]; }
+        if(raw){ hist=JSON.parse(raw).map(h=>{
+          const o={...h, t:new Date(h.t)};
+          if(!o.id) o.id=uid();
+          if(o.prev===undefined) o.prev = (o.mode==='add' && o.newVal!=null) ? o.newVal-o.added : null;  // 舊版紀錄
+          return o; }); } }catch(e){ hist=[]; }
     }
     function saveHistLS(){ try{ localStorage.setItem(HIST_KEY, JSON.stringify(hist)); }catch(e){} }
-    function addHist(p,r){
-      hist.unshift({ name:p.name||p.barcode||'', model:p.model||'', barcode:p.barcode||'', row:r.row,
-        status:r.status, added:r.added, newVal:r.newValue, mode:r.mode, t:new Date() });
+    function loadQueue(){ try{ const raw=localStorage.getItem(QUEUE_KEY); queue = raw ? JSON.parse(raw) : []; }catch(e){ queue=[]; } }
+    function saveQueueLS(){ try{ localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); }catch(e){} }
+
+    function prevFrom(job,r){
+      if(r.oldValue!=null) return r.oldValue;
+      return r.mode==='set' ? job.prev : r.newValue - r.added;
+    }
+    function addHist(job,r){
+      hist.unshift({ id:job.id, name:job.name, model:job.model, barcode:job.item.barcode, row:r.row ?? job.item.row,
+        status:r.status, added:r.added, newVal:r.newValue, prev:prevFrom(job,r), mode:r.mode, t:new Date() });
       saveHistLS(); renderHist();
+    }
+    function enqueue(job){
+      queue.push(job); saveQueueLS();
+      hist.unshift({ id:job.id, name:job.name, model:job.model, barcode:job.item.barcode, row:job.item.row,
+        status:job.status, added:job.qty, newVal:null, prev:null, mode:job.mode, pending:true, t:new Date(job.t) });
+      saveHistLS(); renderHist(); renderQueue();
+    }
+    function renderQueue(){
+      const bar=document.getElementById('queueBar');
+      if(!queue.length){ bar.style.display='none'; return; }
+      bar.style.display='flex';
+      document.getElementById('queueText').textContent='⏳ 有 '+queue.length+' 筆待上傳'+(navigator.onLine?'':'（目前離線）');
+    }
+    async function flushQueue(){
+      if(flushing || !queue.length) return;
+      flushing=true; let done=0;
+      document.getElementById('queueText').innerHTML='<span class="spin"></span>上傳中…';
+      try{
+        while(queue.length){
+          const job=queue[0];
+          const h=hist.find(x=>x.id===job.id);
+          let r;
+          try{ r=await apiSave(job.item, job.status, job.qty, job.mode); }
+          catch(e){
+            if(isNetErr(e)) break;                         // 還是沒網路：保留，下次再試
+            queue.shift();                                 // 逾時：不確定是否已寫入，不再重送
+            if(h){ h.pending=false; h.uncertain=true; }
+            toast('「'+job.name+'」上傳逾時，請重新查詢確認數量','err'); feedback('err');
+            continue;
+          }finally{ saveQueueLS(); }
+          queue.shift();
+          if(r && r.ok){
+            done++;
+            if(h){ Object.assign(h,{ pending:false, status:r.status, added:r.added, newVal:r.newValue, mode:r.mode,
+              prev:prevFrom(job,r), row:r.row ?? h.row }); }
+          }else{
+            if(h){ h.pending=false; h.failed=(r&&(r.message||r.error))||'儲存失敗'; }
+            toast('「'+job.name+'」上傳失敗：'+((r&&(r.message||r.error))||''),'err'); feedback('err');
+          }
+        }
+      }finally{
+        flushing=false; saveQueueLS(); saveHistLS(); renderHist(); renderQueue();
+      }
+      if(done){ toast('✓ 已補上傳 '+done+' 筆'+(queue.length?'，尚有 '+queue.length+' 筆':''),'ok'); feedback('ok'); }
+    }
+    window.addEventListener('online', ()=>{ renderQueue(); flushQueue(); });
+    window.addEventListener('offline', renderQueue);
+    setInterval(()=>{ if(queue.length && navigator.onLine) flushQueue(); }, 30000);
+    if(queue.length && navigator.onLine) setTimeout(flushQueue, 1500);
+
+    // ---- 撤銷：把該狀態的數量設回寫入前的值 ----
+    async function undoHist(id){
+      const h=hist.find(x=>x.id===id);
+      if(!h || h.undone || h.busy) return;
+      initAudio();
+      if(h.pending){
+        if(!confirm('取消這筆尚未上傳的紀錄?')) return;
+        if(flushing && queue.length && queue[0].id===id){ toast('這筆正在上傳，請稍後再撤銷','err'); return; }
+        queue=queue.filter(j=>j.id!==id); saveQueueLS();
+        h.pending=false; h.undone=true; saveHistLS(); renderHist(); renderQueue();
+        toast('已取消這筆待上傳紀錄','ok'); return;
+      }
+      if(h.prev==null){ toast('此筆缺少寫入前數量，無法撤銷','err'); return; }
+      if(!confirm('撤銷「'+h.name+'」'+h.status+'：\n數量將由 '+h.newVal+' 還原為 '+h.prev
+        +'\n\n（若之後有人再修改過此品項，會被這個數字覆蓋）')) return;
+      h.busy=true; renderHist();
+      try{
+        const r=await apiSave({barcode:h.barcode, row:h.row}, h.status, h.prev, 'set');
+        if(r && r.ok){
+          h.undone=true; feedback('ok');
+          toast('↩ 已撤銷，'+h.status+' 還原為 '+r.newValue,'ok');
+        }else{ feedback('err'); toast('撤銷失敗：'+((r&&(r.message||r.error))||''),'err'); }
+      }catch(e){ feedback('err'); toast('撤銷失敗：'+e.message+(isNetErr(e)?'（請連線後再試）':'（請重新查詢確認數量）'),'err'); }
+      finally{ h.busy=false; saveHistLS(); renderHist(); }
+    }
+
+    function histNote(h){
+      if(h.undone) return '已撤銷';
+      if(h.pending) return '待上傳';
+      if(h.failed) return '上傳失敗：'+h.failed;
+      if(h.uncertain) return '上傳逾時，未確認';
+      return '';
     }
     function renderHist(){
       const box=document.getElementById('histList');
       if(!hist.length){box.innerHTML='<div class="empty">尚無紀錄，掃描或搜尋後會顯示在這裡</div>';return;}
       box.innerHTML=hist.map(h=>{
         const t=h.t.toLocaleTimeString('zh-TW',{hour12:false});
-        const c=meta(h.status).color;
-        return '<div class="hi"><div><div class="n">'+esc(h.name)+'</div>'
-          +'<div class="m"><span class="dot" style="background:'+c+'"></span>'+h.status+'　'+t+(h.mode==='set'?'　覆蓋':'')+'</div></div>'
-          +'<div class="q" style="color:'+c+'">'+(h.mode==='set'?'=':'+')+h.added+' → '+h.newVal+'</div></div>';
+        const c=(meta(h.status)||{color:'#6b7280'}).color;
+        const sign=h.mode==='set'?'=':'+';
+        const note=histNote(h);
+        const tagCls=h.undone?'undone':(h.pending?'pending':'bad');
+        const canUndo=!h.undone && !h.failed && !h.uncertain;
+        return '<div class="hi'+(h.undone?' undone':'')+'"><div><div class="n">'+esc(h.name)+'</div>'
+          +'<div class="m"><span class="dot" style="background:'+c+'"></span>'+esc(h.status)+'　'+t+(h.mode==='set'?'　覆蓋':'')
+          +(note?'<span class="tag '+tagCls+'">　'+esc(note)+'</span>':'')+'</div></div>'
+          +'<div class="r"><div class="q" style="color:'+c+'">'+sign+h.added+(h.newVal!=null?' → '+h.newVal:'')+'</div>'
+          +(canUndo?'<button class="undo" onclick="undoHist(\''+h.id+'\')"'+(h.busy?' disabled':'')+'>'
+            +(h.busy?'撤銷中…':(h.pending?'取消':'↩ 撤銷'))+'</button>':'')
+          +'</div></div>';
       }).join('');
     }
     function clearHist(){
       if(!hist.length) return;
-      if(!confirm('確定清空本次盤點紀錄?（不影響已存入表單的數字）')) return;
+      if(queue.length){ alert('還有 '+queue.length+' 筆待上傳，請等上傳完成後再清空。'); return; }
+      if(!confirm('確定清空本次盤點紀錄?（不影響已存入表單的數字，清空後也無法再撤銷）')) return;
       hist=[]; saveHistLS(); renderHist();
     }
 
@@ -472,12 +665,13 @@
         '狀態': h.status,
         '本次數量': h.added,
         '寫入方式': h.mode==='set'?'覆蓋':'累加',
-        '寫入後數量': h.newVal,
-        '試算表列': h.row
+        '寫入後數量': h.newVal ?? '',
+        '試算表列': h.row,
+        '備註': histNote(h)
       }));
       try{
         const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [{wch:19},{wch:24},{wch:16},{wch:16},{wch:8},{wch:9},{wch:9},{wch:11},{wch:9}];
+        ws['!cols'] = [{wch:19},{wch:24},{wch:16},{wch:16},{wch:8},{wch:9},{wch:9},{wch:11},{wch:9},{wch:18}];
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, '盤點紀錄');
         const n=new Date(), pad=x=>String(x).padStart(2,'0');
