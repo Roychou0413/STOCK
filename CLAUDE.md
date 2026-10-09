@@ -1,6 +1,8 @@
 # 專案說明
 
-- 單一檔案網頁 `index.html`：手機用的倉庫盤點掃描工具，後端為 Google Apps Script（不在此 repo）。
+- `index.html`：手機用的倉庫盤點掃描網頁（單一檔案）。
+- `apps-script/Code.gs`：Google Apps Script 後端。每人密碼登入（「使用者」分頁），所有請求都帶 `code` 參數；修改紀錄寫在「紀錄」分頁。
+- 前端需相容舊版後端（不帶 action 的存活測試回應沒有 `version` 時視為 v1）。
 - 回覆一律使用繁體中文。
 
 ## 每次改動都要提供預覽頁

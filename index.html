@@ -279,18 +279,19 @@
   <!-- 設定 -->
   <div class="overlay" id="setOverlay">
     <div class="sheet">
-      <h2>⚙ 設定</h2>
-      <div class="lbl">盤點人員</div>
-      <input id="setName" class="field" placeholder="你的名字（會記在試算表與異動紀錄）">
-      <div class="lbl">存取碼</div>
-      <input id="setToken" class="field" type="password" autocomplete="off" placeholder="後端有設 API_TOKEN 時才需要">
+      <h2>🔐 登入 / 設定</h2>
+      <div class="sub" id="loginState">尚未登入</div>
+      <div class="lbl">個人密碼</div>
+      <input id="setCode" class="field" type="password" autocomplete="current-password" enterkeyhint="go"
+        placeholder="輸入「使用者」分頁裡你的密碼">
       <div class="note" id="setInfo"></div>
       <div class="lbl">本輪盤點</div>
       <div class="note" id="roundInfo">—</div>
       <button class="ghost" style="width:100%;margin-top:8px" onclick="startRound()">🔄 開始新一輪盤點</button>
+      <button class="ghost" style="width:100%;margin-top:8px" id="logoutBtn" onclick="logout()">登出這支手機</button>
       <div class="actions">
         <button class="cancel" onclick="closeSettings()">關閉</button>
-        <button class="save" onclick="saveSettings()">儲存</button>
+        <button class="save" id="loginBtn" onclick="login()">登入</button>
       </div>
     </div>
   </div>
@@ -300,12 +301,12 @@
   <script>
     // ===================== 設定 =====================
     const API_URL = 'https://script.google.com/macros/s/AKfycbzTUjakqdeF-j2Yz6x2Z9Ol_R3jDegmvrEJpRa0rHQplOjJ4-vAfjUvfgQGUzc7-pAi7Q/exec';
-    // 存取碼不要寫在這裡（repo 是公開的），請在網頁的「⚙ 設定」輸入，只會存在這支手機
+    // 每人用自己的密碼登入（後端「使用者」分頁），密碼只存在這支手機
     // ==============================================
 
-    // ---- 使用者設定（盤點人員、存取碼）----
+    // ---- 登入資訊（姓名由後端回傳，密碼 = code）----
     const SET_KEY='stocktake_settings_v1';
-    let settings={ operator:'', token:'' };
+    let settings={ operator:'', code:'' };
     try{ Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY)||'{}')); }catch(e){}
     function saveSettingsLS(){ try{ localStorage.setItem(SET_KEY, JSON.stringify(settings)); }catch(e){} }
 
@@ -353,21 +354,31 @@
     // ---- API ----
     function apiGet(action, params, timeoutMs){
       const q=Object.assign({action}, params||{});
-      if(settings.token) q.token=settings.token;
+      if(settings.code && q.code===undefined) q.code=settings.code;
       const qs=Object.keys(q).map(k=>k+'='+encodeURIComponent(q[k])).join('&');
-      return fetchJSON(API_URL+'?'+qs, null, timeoutMs);
+      return fetchJSON(API_URL+'?'+qs, null, timeoutMs).then(checkAuth);
     }
     function apiPost(body){
       return fetchJSON(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(Object.assign({ token: settings.token, operator: settings.operator }, body))
-      });
+        body: JSON.stringify(Object.assign({ code: settings.code }, body))
+      }).then(checkAuth);
+    }
+    // 後端回「未授權」時，跳出登入視窗
+    let authPrompted=0;
+    function checkAuth(r){
+      if(r && r.needAuth && Date.now()-authPrompted>5000){
+        authPrompted=Date.now();
+        setTimeout(()=>{ openSettings(); toast(settings.code?'密碼錯誤或已停用，請重新登入':'請先登入','err'); }, 50);
+      }
+      return r;
     }
     const apiLookup = barcode => apiGet('lookup', {barcode});
     const apiSearch = q => apiGet('search', {q});
     function apiSave(item, status, qty, mode, extra){
-      return apiPost(Object.assign({ action:'save', barcode:item.barcode||'', row:item.row, status, qty, mode }, extra||{}));
+      return apiPost(Object.assign({ action:'save', barcode:item.barcode||'', row:item.row, name:item.name||'', model:item.model||'',
+        status, qty, mode }, extra||{}));
     }
 
     // ---- 後端版本偵測：v2 才有新增商品、儲位、差異報表、開始新一輪 ----
@@ -377,11 +388,9 @@
       toast('這個功能需要更新後端（apps-script/Code.gs），請參考 README','err');
       return false;
     }
-    function checkBackend(){
-      apiGet('ping', null, 15000).then(r=>{
-        if(r && r.ok && r.version){ backendVersion=r.version; }
-        else if(r && r.error && /存取碼/.test(r.error)){ backendVersion=2; toast(r.error,'err'); }
-        else backendVersion=1;
+    function checkBackend(){   // 不帶 action 的存活測試（免密碼），v2 會回傳 version
+      fetchJSON(API_URL, null, 15000).then(r=>{
+        backendVersion = (r && r.version) ? r.version : 1;
         renderSetInfo();
       }).catch(()=>{});
     }
@@ -552,7 +561,7 @@
         searchResults = r.results || [];
         if(!searchResults.length){
           box.innerHTML='<div class="sr-hint">找不到符合「'+esc(q)+'」的商品'
-            +(looksLikeBarcode(q)?'<br><button class="mini" style="margin-top:8px" onclick="notFound(\''+esc(q)+'\')">以此條碼新增 / 綁定商品</button>':'')
+            +(looksLikeBarcode(q)&&backendVersion!==1?'<br><button class="mini" style="margin-top:8px" onclick="notFound(\''+esc(q)+'\')">以此條碼新增 / 綁定商品</button>':'')
             +'</div>';
           return;
         }
@@ -809,7 +818,7 @@
     }
     function renderProductInfo(){
       const r=product, parts=[];
-      parts.push('📍 儲位 <b>'+(r.location?esc(r.location):'未設定')+'</b> <button class="loc-btn" onclick="editLocation()">編輯</button>');
+      parts.push('📍 儲位 <b>'+(r.location?esc(r.location):'未設定')+'</b>'+(backendVersion!==1?' <button class="loc-btn" onclick="editLocation()">編輯</button>':''));
       if(r.book!=null && r.book!==undefined) parts.push('帳面 <b>'+r.book+'</b>');
       if(r.lastCounted) parts.push('上次盤點 '+fmtTime(r.lastCounted)+(r.counter?'（'+esc(r.counter)+'）':''));
       document.getElementById('mInfo').innerHTML=parts.join('');
@@ -836,7 +845,7 @@
     function isNetErr(e){ return !navigator.onLine || (e && e.name==='TypeError'); }
 
     function makeJob(p, st, qty, md){
-      return { id:uid(), item:{barcode:p.barcode||'', row:p.row}, name:p.name||p.barcode||'', model:p.model||'',
+      return { id:uid(), item:{barcode:p.barcode||'', row:p.row, name:p.name||'', model:p.model||''}, name:p.name||p.barcode||'', model:p.model||'',
         status:st, qty, mode:md, prev:(p.quantities && p.quantities[st]) ?? 0, operator:settings.operator, t:Date.now() };
     }
     function save(){
@@ -856,7 +865,7 @@
       }
       if(opt.modal){ saveBtn.disabled=true; saveBtn.textContent='儲存中…'; }
       const unbusy=()=>{ if(opt.modal){ saveBtn.disabled=false; saveBtn.textContent='存入表單'; } };
-      apiSave(job.item, job.status, job.qty, job.mode, { operator:job.operator }).then(r=>{
+      apiSave(job.item, job.status, job.qty, job.mode).then(r=>{
         unbusy();
         if(r && r.ok){
           feedback('ok');
@@ -898,6 +907,7 @@
     function saveQueueLS(){ try{ localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); }catch(e){} }
 
     function prevFrom(job,r){
+      if(r.previous!=null) return r.previous;
       if(r.oldValue!=null) return r.oldValue;
       return r.mode==='set' ? job.prev : r.newValue - r.added;
     }
@@ -927,7 +937,7 @@
           const job=queue[0];
           const h=hist.find(x=>x.id===job.id);
           let r;
-          try{ r=await apiSave(job.item, job.status, job.qty, job.mode, { operator:job.operator }); }
+          try{ r=await apiSave(job.item, job.status, job.qty, job.mode); }
           catch(e){
             if(isNetErr(e)) break;                         // 還是沒網路：保留，下次再試
             queue.shift();                                 // 逾時：不確定是否已寫入，不再重送
@@ -935,6 +945,7 @@
             toast('「'+job.name+'」上傳逾時，請重新查詢確認數量','err'); feedback('err');
             continue;
           }finally{ saveQueueLS(); }
+          if(r && r.needAuth) break;                       // 密碼失效：保留，重新登入後再上傳
           queue.shift();
           if(r && r.ok){
             done++;
@@ -973,7 +984,7 @@
         +'\n\n（若之後有人再修改過此品項，會被這個數字覆蓋）')) return;
       h.busy=true; renderHist();
       try{
-        const r=await apiSave({barcode:h.barcode, row:h.row}, h.status, h.prev, 'set', { undo:true });
+        const r=await apiSave({barcode:h.barcode, row:h.row, name:h.name, model:h.model}, h.status, h.prev, 'set', { undo:true });
         if(r && r.ok){
           h.undone=true; feedback('ok'); patchListQty(r.row ?? h.row, h.status, r.newValue);
           toast('↩ 已撤銷，'+h.status+' 還原為 '+r.newValue,'ok');
@@ -1054,26 +1065,39 @@
     // ---- 設定 ----
     function renderWho(){ document.getElementById('whoLabel').textContent = settings.operator ? '👤 '+settings.operator : ''; }
     function renderSetInfo(){
-      const v = backendVersion===0 ? '檢查中…' : backendVersion>=2 ? '已是新版（v'+backendVersion+'）' : '舊版（新增商品、儲位、差異報表需要更新 Code.gs）';
+      const v = backendVersion===0 ? '檢查中…' : backendVersion>=2 ? '新版（v'+backendVersion+'）' : '舊版（新增商品、儲位、差異報表需要更新 Code.gs）';
       document.getElementById('setInfo').textContent='後端：'+v;
+      document.getElementById('loginState').textContent = settings.code ? '目前登入：'+(settings.operator||'(未命名)') : '尚未登入，請輸入密碼';
+      document.getElementById('logoutBtn').style.display = settings.code ? '' : 'none';
       document.getElementById('roundInfo').textContent = listInfo.roundStart
         ? '本輪開始於 '+fmtTime(listInfo.roundStart)+'（以「全部庫存」最後一次載入為準）'
         : '尚未開始（未盤清單會以「有沒有盤點過」判斷）';
     }
     function openSettings(){
-      document.getElementById('setName').value=settings.operator||'';
-      document.getElementById('setToken').value=settings.token||'';
+      document.getElementById('setCode').value='';
       renderSetInfo();
       document.getElementById('setOverlay').classList.add('show');
     }
     function closeSettings(){ document.getElementById('setOverlay').classList.remove('show'); }
-    function saveSettings(){
-      const tokenChanged = settings.token !== document.getElementById('setToken').value.trim();
-      settings.operator=document.getElementById('setName').value.trim();
-      settings.token=document.getElementById('setToken').value.trim();
-      saveSettingsLS(); renderWho(); closeSettings();
-      toast('✓ 設定已儲存','ok');
-      if(tokenChanged){ backendVersion=0; checkBackend(); }
+    document.getElementById('setCode').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); login(); } });
+    async function login(){
+      const code=document.getElementById('setCode').value.trim();
+      if(!code){ toast('請輸入密碼','err'); return; }
+      const btn=document.getElementById('loginBtn'); btn.disabled=true; btn.textContent='驗證中…';
+      try{
+        const r=await apiGet('auth', {code});
+        if(r && r.ok){
+          settings.code=code; settings.operator=r.name||''; saveSettingsLS(); renderWho(); closeSettings();
+          feedback('ok'); toast('✓ 歡迎，'+settings.operator,'ok');
+          if(queue.length) flushQueue();
+        }else{ feedback('err'); toast((r&&r.error)||'登入失敗','err'); }
+      }catch(e){ toast('登入失敗：'+e.message,'err'); }
+      finally{ btn.disabled=false; btn.textContent='登入'; }
+    }
+    function logout(){
+      if(queue.length && !confirm('還有 '+queue.length+' 筆待上傳，登出後要重新登入才會上傳。確定登出?')) return;
+      settings.code=''; settings.operator=''; saveSettingsLS(); renderWho(); renderSetInfo();
+      toast('已登出');
     }
     async function startRound(){
       if(!needV2()) return;
@@ -1095,7 +1119,7 @@
     document.getElementById('contStatus').innerHTML=STATUS_META.map(sm=>'<option>'+sm.name+'</option>').join('');
     renderWho();
     checkBackend();
-    if(!settings.operator) setTimeout(()=>toast('請先到右上角 ⚙ 設定填寫盤點人員'), 800);
+    if(!settings.code) setTimeout(openSettings, 300);
     // PWA：離線也能開啟頁面（只在 https 下啟用）
     if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
       window.addEventListener('load', ()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));

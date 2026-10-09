@@ -1,280 +1,396 @@
 /**
- * 倉庫盤點掃描 — Google Apps Script 後端（v2）
+ * 倉庫盤點掃描 — 後端 API (Google Apps Script)  v2
+ * 含「每人密碼登入 + 修改紀錄」，並新增：新增商品 / 綁定條碼 / 儲位 / 盤點進度與差異 / 開始新一輪
  *
- * 部署方式：擴充功能 → Apps Script → 貼上本檔 → 部署 → 管理部署作業 → 編輯（鉛筆）
- *          → 版本選「新版本」→ 部署。這樣網址不變，前端不用改。
- *          執行身分：我；存取權：任何人。
+ * 綁定在你的試算表上：擴充功能 → Apps Script，把整個 Code.gs 內容換成本檔。
  *
- * 存取碼（強烈建議設定）：專案設定 → 指令碼屬性 → 新增 API_TOKEN = 自訂一組密碼。
- *          設定後，手機要在網頁的「⚙ 設定」輸入同一組存取碼才能讀寫。
+ * ★ 需要的分頁：
+ *   1) 「使用者」分頁：第一列標題為  姓名 | 密碼 | 啟用  （一人一列；啟用留空或填是=可用，填 否/N=停用）
+ *   2) 「紀錄」分頁：可不用自己建，第一次有人存入時會自動建立並寫入標題。
  *
- * 欄位是依「標題列文字」自動尋找的，欄位順序不限。若你的標題名稱不同，請改下方 CONFIG.COLS。
+ * ★ 庫存分頁的選用欄位（沒有也能用）：
+ *   - 帳面數量：有這欄才會計算盤盈 / 盤虧
+ *   - 儲位、最後盤點時間、盤點人員：第一次用到時會自動在最右邊新增
+ *
+ * ★ 改完務必「部署 → 管理部署作業 → 編輯 → 版本：新版本 → 部署」，改動才會生效。
  */
 
-const CONFIG = {
-  SHEET_NAME: '',          // 庫存工作表名稱；空白 = 第一個工作表
-  HEADER_ROW: 1,           // 標題列在第幾列
-  COLS: {                  // 每個欄位可接受的標題名稱（找到第一個符合的就用）
-    name:        ['品名', '商品名稱', '名稱', '品項'],
-    model:       ['型號', '規格', '料號'],
-    barcode:     ['國際條碼', '條碼', 'Barcode', 'EAN'],
-    book:        ['帳面數量', '帳面庫存', '系統數量'],   // 選用：盤點差異報表用
-    location:    ['儲位', '位置', '櫃位'],               // 選用：沒有會在第一次設定儲位時自動新增
-    lastCounted: ['最後盤點時間'],                       // 自動新增
-    counter:     ['盤點人員'],                           // 自動新增
-  },
-  STATUSES: ['新品', '福利品', '瑕疵', '報廢', '樣品', '採購樣品'],  // 每個狀態一欄，標題需完全相同
-  LOG_SHEET: '異動紀錄',   // 每次寫入都會記一筆到這個工作表（自動建立）
-};
-const VERSION = 2;
+// ===================== 設定 =====================
+const SHEET_NAME = '';   // 留空 = 第一個工作表（庫存資料）；或填分頁名稱
+const HEADER_ROW = 1;
 
-// ===================== 進入點 =====================
-function doGet(e)  { return respond_(() => handle_(e.parameter || {})); }
-function doPost(e) {
-  return respond_(() => {
-    let p = {};
-    try { p = JSON.parse((e.postData && e.postData.contents) || '{}'); } catch (err) { throw new Error('資料格式錯誤'); }
-    return handle_(p);
-  });
-}
-function respond_(fn) {
-  let out;
-  try { out = fn(); } catch (err) { out = { error: String(err && err.message || err) }; }
-  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
-}
+const BARCODE_HEADER = '國際條碼';
+const NAME_HEADER    = '品名';
+const MODEL_HEADER   = '型號';
+const STATUS_COLUMNS = ['新品', '福利品', '瑕疵', '報廢', '樣品', '採購樣品'];
 
-function handle_(p) {
-  checkToken_(p.token);
-  switch (p.action) {
-    case 'ping':        return { ok: true, version: VERSION, tokenRequired: !!getToken_() };
-    case 'lookup':      return lookup_(p);
-    case 'search':      return search_(p);
-    case 'list':        return list_();
-    case 'save':        return withLock_(() => save_(p));
-    case 'create':      return withLock_(() => create_(p));
-    case 'bindBarcode': return withLock_(() => bindBarcode_(p));
-    case 'setLocation': return withLock_(() => setLocation_(p));
-    case 'startRound':  return withLock_(() => startRound_(p));
-    default: throw new Error('未知的動作：' + p.action);
+const BOOK_HEADER     = '帳面數量';      // 選用
+const LOCATION_HEADER = '儲位';          // 選用（自動新增）
+const COUNTED_HEADER  = '最後盤點時間';  // 自動新增
+const COUNTER_HEADER  = '盤點人員';      // 自動新增
+
+const USERS_SHEET = '使用者';  // 使用者清單分頁（姓名/密碼/啟用）
+const LOG_SHEET   = '紀錄';    // 修改紀錄分頁（自動建立）
+const SEARCH_LIMIT = 30;
+const API_VERSION = 2;
+// ==============================================
+
+
+function doGet(e) {
+  try {
+    const p = (e && e.parameter) || {};
+    if (!p.action) return json_({ ok: true, message: '倉庫盤點 API 運作中', version: API_VERSION }); // 存活測試（免密碼）
+    const user = findUser_(p.code);
+    if (p.action === 'auth') {
+      return json_(user ? { ok: true, name: user.name } : { ok: false, error: '密碼錯誤或已停用' });
+    }
+    if (!user) return json_({ ok: false, error: '未授權（密碼錯誤或已停用）', needAuth: true });
+
+    if (p.action === 'lookup') return json_(lookupProduct(p.barcode));
+    if (p.action === 'search') return json_(searchProducts(p.q));
+    if (p.action === 'list')   return json_(listAll());
+    return json_({ ok: false, error: '未知的動作' });
+  } catch (err) {
+    return json_({ ok: false, error: String(err.message || err) });
   }
 }
 
-// ===================== 驗證 / 鎖 =====================
-function getToken_() { return PropertiesService.getScriptProperties().getProperty('API_TOKEN') || ''; }
-function checkToken_(t) {
-  const need = getToken_();
-  if (need && String(t || '') !== need) throw new Error('存取碼錯誤，請到「⚙ 設定」輸入正確的存取碼');
+function doPost(e) {
+  try {
+    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    const user = findUser_(body.code);
+    if (!user) return json_({ ok: false, error: '未授權（密碼錯誤或已停用）', needAuth: true });
+    switch (body.action) {
+      case 'save':        return json_(withLock_(() => saveCount(body, user)));
+      case 'create':      return json_(withLock_(() => createProduct(body, user)));
+      case 'bindBarcode': return json_(withLock_(() => bindBarcode(body, user)));
+      case 'setLocation': return json_(withLock_(() => setLocation(body, user)));
+      case 'startRound':  return json_(withLock_(() => startRound(body, user)));
+    }
+    return json_({ ok: false, error: '未知的動作' });
+  } catch (err) {
+    return json_({ ok: false, error: String(err.message || err) });
+  }
 }
+
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 function withLock_(fn) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('伺服器忙碌中，請稍後再試');
+  lock.waitLock(10000);
   try { return fn(); } finally { lock.releaseLock(); }
 }
 
-// ===================== 工作表 =====================
-function ctx_() {
+
+// ============ 登入驗證 / 紀錄 ============
+
+/* 依密碼在「使用者」分頁比對，回傳 {name} 或 null */
+function findUser_(code) {
+  code = String(code || '').trim();
+  if (!code) return null;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = CONFIG.SHEET_NAME ? ss.getSheetByName(CONFIG.SHEET_NAME) : ss.getSheets()[0];
-  if (!sh) throw new Error('找不到工作表：' + CONFIG.SHEET_NAME);
-  const lastCol = Math.max(sh.getLastColumn(), 1);
-  const headers = sh.getRange(CONFIG.HEADER_ROW, 1, 1, lastCol).getValues()[0].map(h => String(h).trim());
-  const col = {};
-  Object.keys(CONFIG.COLS).forEach(k => {
-    const i = headers.findIndex(h => CONFIG.COLS[k].indexOf(h) >= 0);
-    col[k] = i >= 0 ? i + 1 : 0;
-  });
-  const st = {};
-  CONFIG.STATUSES.forEach(s => { const i = headers.indexOf(s); st[s] = i >= 0 ? i + 1 : 0; });
-  if (!col.name && !col.barcode) throw new Error('找不到「品名」或「國際條碼」欄，請檢查標題列或 CONFIG.COLS');
-  return { ss, sh, headers, col, st };
-}
-// 欄位不存在時，在最右邊新增一欄
-function ensureCol_(c, key) {
-  if (c.col[key]) return c.col[key];
-  const n = c.sh.getLastColumn() + 1;
-  c.sh.getRange(CONFIG.HEADER_ROW, n).setValue(CONFIG.COLS[key][0]);
-  c.col[key] = n; c.headers.push(CONFIG.COLS[key][0]);
-  return n;
-}
-function readRows_(c) {
-  const first = CONFIG.HEADER_ROW + 1, last = c.sh.getLastRow();
-  if (last < first) return [];
-  const vals = c.sh.getRange(first, 1, last - first + 1, c.sh.getLastColumn()).getValues();
-  const out = [];
-  vals.forEach((v, i) => {
-    const it = toItem_(c, v, first + i);
-    if (it.name || it.barcode) out.push(it);
-  });
-  return out;
-}
-function readRow_(c, row) {
-  if (!row || row <= CONFIG.HEADER_ROW || row > c.sh.getLastRow()) return null;
-  const v = c.sh.getRange(row, 1, 1, c.sh.getLastColumn()).getValues()[0];
-  return toItem_(c, v, row);
-}
-function toItem_(c, v, row) {
-  const g = k => c.col[k] ? v[c.col[k] - 1] : '';
-  const q = {};
-  CONFIG.STATUSES.forEach(s => { q[s] = c.st[s] ? (Number(v[c.st[s] - 1]) || 0) : 0; });
-  const book = g('book'), lc = g('lastCounted');
-  return {
-    row,
-    name: String(g('name')).trim(),
-    model: String(g('model')).trim(),
-    barcode: normBarcode_(g('barcode')),
-    location: String(g('location')).trim(),
-    book: c.col.book ? (book === '' || book === null ? null : Number(book) || 0) : null,
-    lastCounted: lc instanceof Date ? lc.toISOString() : (lc ? String(lc) : ''),
-    counter: String(g('counter')).trim(),
-    quantities: q,
-  };
-}
-function normBarcode_(v) {
-  if (v === '' || v === null || v === undefined) return '';
-  if (typeof v === 'number') return v.toFixed(0);
-  return String(v).trim();
-}
-function sameBarcode_(a, b) {
-  a = String(a || '').trim(); b = String(b || '').trim();
-  if (!a || !b) return false;
-  if (a === b) return true;
-  return /^\d+$/.test(a) && /^\d+$/.test(b) && a.replace(/^0+/, '') === b.replace(/^0+/, '');  // 容忍開頭 0 被吃掉
-}
-function findByBarcode_(c, barcode) {
-  return readRows_(c).find(it => sameBarcode_(it.barcode, barcode)) || null;
+  const sheet = ss.getSheetByName(USERS_SHEET);
+  if (!sheet) throw new Error('找不到「' + USERS_SHEET + '」分頁（請新增，第一列標題：姓名 / 密碼 / 啟用）');
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2) return null;
+
+  const hmap = {};
+  sheet.getRange(1, 1, 1, lastCol).getValues()[0].forEach((h, i) => { const k = String(h).trim(); if (k) hmap[k] = i; });
+  const ci = hmap['密碼'], ni = hmap['姓名'], ei = hmap['啟用'];
+  if (ci === undefined) throw new Error('「' + USERS_SHEET + '」分頁找不到「密碼」欄');
+
+  const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  for (let i = 0; i < data.length; i++) {
+    const pass = String(data[i][ci]).trim();
+    if (pass && pass === code) {
+      if (ei !== undefined) {
+        const en = String(data[i][ei]).trim().toLowerCase();
+        if (['n', 'no', '否', '停用', '0', 'false', 'x'].indexOf(en) !== -1) return null; // 已停用
+      }
+      const name = (ni !== undefined) ? String(data[i][ni]).trim() : '';
+      return { name: name || '(未命名)' };
+    }
+  }
+  return null;
 }
 
-// ===================== 查詢 =====================
-function lookup_(p) {
-  const bc = String(p.barcode || '').trim();
-  if (!bc) throw new Error('缺少條碼');
-  const it = findByBarcode_(ctx_(), bc);
-  return it ? Object.assign({ found: true }, it) : { found: false, barcode: bc };
+/* 追加一筆修改紀錄到「紀錄」分頁（不存在則自動建立）
+ * o.modeText 有值時直接用（非盤點動作，如「新增商品」），否則依 o.mode 顯示 覆蓋 / 累加 */
+function appendLog_(o) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(LOG_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(LOG_SHEET);
+    sheet.appendRow(['時間', '操作人', '品名', '型號', '國際條碼', '狀態', '本次數量', '寫入方式', '前值', '後值', '列', '備註']);
+  } else if (String(sheet.getRange(1, 12).getValue()).trim() === '') {
+    sheet.getRange(1, 12).setValue('備註');   // 舊紀錄表補上「備註」標題
+  }
+  const modeText = o.modeText !== undefined ? o.modeText : (o.mode === 'set' ? '覆蓋' : '累加');
+  sheet.appendRow([
+    new Date(), o.user || '', o.name || '', o.model || '', o.barcode || '',
+    o.status || '', o.qty === undefined ? '' : o.qty, modeText,
+    o.prev === undefined ? '' : o.prev, o.next === undefined ? '' : o.next, o.row || '', o.note || ''
+  ]);
 }
-function search_(p) {
-  const q = String(p.q || '').trim().toLowerCase();
-  if (!q) return { results: [] };
-  const words = q.split(/\s+/);
-  const res = readRows_(ctx_()).filter(it => {
-    const s = (it.name + ' ' + it.model + ' ' + it.barcode + ' ' + it.location).toLowerCase();
-    return words.every(w => s.indexOf(w) >= 0);
-  });
-  return { results: res.slice(0, 50) };
+
+
+// ============ 資料存取 ============
+
+function getSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (SHEET_NAME) {
+    const s = ss.getSheetByName(SHEET_NAME);
+    if (!s) throw new Error('找不到工作表：' + SHEET_NAME);
+    return s;
+  }
+  return ss.getSheets()[0];
 }
-function list_() {
-  const c = ctx_();
+
+function getHeaderMap_(sheet) {
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(HEADER_ROW, 1, 1, lastCol).getValues()[0];
+  const map = {};
+  headers.forEach((h, i) => { const key = String(h).trim(); if (key) map[key] = i + 1; });
+  return map;
+}
+
+/* 欄位不存在時，在最右邊新增一欄，回傳欄號 */
+function ensureCol_(sheet, headerMap, header) {
+  if (headerMap[header]) return headerMap[header];
+  const col = sheet.getLastColumn() + 1;
+  sheet.getRange(HEADER_ROW, col).setValue(header);
+  headerMap[header] = col;
+  return col;
+}
+
+function normalizeBarcode_(v) {
+  if (v === null || v === undefined) return '';
+  let s = String(v).trim();
+  if (s === '') return '';
+  if (/e/i.test(s) && !isNaN(Number(s))) s = Number(s).toFixed(0);
+  return s.replace(/[^0-9]/g, '');
+}
+
+function locate_(barcode) {
+  const sheet = getSheet_();
+  const headerMap = getHeaderMap_(sheet);
+  const barcodeCol = headerMap[BARCODE_HEADER];
+  if (!barcodeCol) throw new Error('表頭找不到「' + BARCODE_HEADER + '」欄，請確認標題文字。');
+
+  const target = normalizeBarcode_(barcode);
+  const lastRow = sheet.getLastRow();
+  let row = null;
+  if (target && lastRow > HEADER_ROW) {
+    const values = sheet.getRange(HEADER_ROW + 1, barcodeCol, lastRow - HEADER_ROW, 1).getValues();
+    for (let i = 0; i < values.length; i++) {
+      if (normalizeBarcode_(values[i][0]) === target) { row = HEADER_ROW + 1 + i; break; }
+    }
+  }
+  return { sheet, headerMap, row };
+}
+
+function rowToProduct_(sheet, headerMap, row, rowValues) {
+  const getVal = (h) => headerMap[h] ? rowValues[headerMap[h] - 1] : '';
+  const quantities = {};
+  STATUS_COLUMNS.forEach(st => { quantities[st] = Number(getVal(st)) || 0; });
+  const book = getVal(BOOK_HEADER), counted = getVal(COUNTED_HEADER);
   return {
-    version: VERSION,
-    results: readRows_(c),
+    found: true, row: row,
+    barcode: String(getVal(BARCODE_HEADER) || ''),
+    name: getVal(NAME_HEADER), model: getVal(MODEL_HEADER),
+    quantities: quantities,
+    location: String(getVal(LOCATION_HEADER) || '').trim(),
+    book: (headerMap[BOOK_HEADER] && book !== '' && book !== null) ? (Number(book) || 0) : null,
+    lastCounted: counted instanceof Date ? counted.toISOString() : (counted ? String(counted) : ''),
+    counter: String(getVal(COUNTER_HEADER) || '').trim()
+  };
+}
+
+function readProduct_(sheet, headerMap, row) {
+  const rowValues = sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0];
+  return rowToProduct_(sheet, headerMap, row, rowValues);
+}
+
+function lookupProduct(barcode) {
+  const { sheet, headerMap, row } = locate_(barcode);
+  if (!row) return { found: false, barcode: barcode };
+  const p = readProduct_(sheet, headerMap, row);
+  p.barcode = String(barcode);
+  return p;
+}
+
+function searchProducts(q) {
+  q = String(q || '').trim().toLowerCase();
+  if (!q) return { ok: true, results: [] };
+  const sheet = getSheet_();
+  const headerMap = getHeaderMap_(sheet);
+  const nameCol = headerMap[NAME_HEADER];
+  const modelCol = headerMap[MODEL_HEADER];
+  const locCol = headerMap[LOCATION_HEADER];
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow <= HEADER_ROW) return { ok: true, results: [] };
+
+  const data = sheet.getRange(HEADER_ROW + 1, 1, lastRow - HEADER_ROW, lastCol).getValues();
+  const results = [];
+  for (let i = 0; i < data.length && results.length < SEARCH_LIMIT; i++) {
+    const rowValues = data[i];
+    const name  = nameCol  ? String(rowValues[nameCol - 1])  : '';
+    const model = modelCol ? String(rowValues[modelCol - 1]) : '';
+    const loc   = locCol   ? String(rowValues[locCol - 1])   : '';
+    if (name.toLowerCase().indexOf(q) !== -1 || model.toLowerCase().indexOf(q) !== -1 || loc.toLowerCase().indexOf(q) !== -1) {
+      results.push(rowToProduct_(sheet, headerMap, HEADER_ROW + 1 + i, rowValues));
+    }
+  }
+  return { ok: true, results: results };
+}
+
+function listAll() {
+  const sheet = getSheet_();
+  const headerMap = getHeaderMap_(sheet);
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  const info = {
+    ok: true, version: API_VERSION,
     roundStart: PropertiesService.getScriptProperties().getProperty('ROUND_START') || '',
-    columns: { book: !!c.col.book, location: !!c.col.location },
+    columns: { book: !!headerMap[BOOK_HEADER], location: !!headerMap[LOCATION_HEADER] }
   };
-}
+  if (lastRow <= HEADER_ROW) return Object.assign(info, { results: [] });
 
-// ===================== 寫入 =====================
-function resolveRow_(c, p) {
-  let it = readRow_(c, Number(p.row));
-  // 有條碼時，確認列號沒有因為插入/刪除列而跑掉
-  if (p.barcode && (!it || !sameBarcode_(it.barcode, p.barcode))) it = findByBarcode_(c, p.barcode);
-  if (!it) throw new Error('找不到這個商品（列號或條碼不符），請重新查詢');
-  return it;
-}
-function stamp_(c, row, operator) {
-  c.sh.getRange(row, ensureCol_(c, 'lastCounted')).setValue(new Date());
-  c.sh.getRange(row, ensureCol_(c, 'counter')).setValue(String(operator || ''));
-}
-function log_(c, op, it, extra) {
-  let lg = c.ss.getSheetByName(CONFIG.LOG_SHEET);
-  if (!lg) {
-    lg = c.ss.insertSheet(CONFIG.LOG_SHEET);
-    lg.appendRow(['時間', '盤點人員', '動作', '列', '國際條碼', '品名', '型號', '狀態', '寫入方式', '本次數量', '原數量', '新數量', '備註']);
-    lg.setFrozenRows(1);
+  const data = sheet.getRange(HEADER_ROW + 1, 1, lastRow - HEADER_ROW, lastCol).getValues();
+  const results = [];
+  for (let i = 0; i < data.length; i++) {
+    const prod = rowToProduct_(sheet, headerMap, HEADER_ROW + 1 + i, data[i]);
+    if (!String(prod.name).trim() && !String(prod.barcode).trim()) continue;
+    results.push(prod);
   }
-  const e = extra || {};
-  lg.appendRow([new Date(), op || '', e.action || '', it ? it.row : '', it ? it.barcode : '', it ? it.name : '', it ? it.model : '',
-    e.status || '', e.mode || '', e.qty === undefined ? '' : e.qty, e.oldValue === undefined ? '' : e.oldValue,
-    e.newValue === undefined ? '' : e.newValue, e.note || '']);
+  return Object.assign(info, { results: results });
 }
 
-function save_(p) {
-  const c = ctx_();
-  const status = String(p.status || '');
-  if (!c.st[status]) throw new Error('試算表沒有「' + status + '」欄');
-  const qty = Number(p.qty);
-  if (!isFinite(qty) || Math.floor(qty) !== qty || qty < 0) throw new Error('數量必須是 0 以上的整數');
-  const mode = p.mode === 'set' ? 'set' : 'add';
-  const it = resolveRow_(c, p);
-  const cell = c.sh.getRange(it.row, c.st[status]);
-  const oldValue = Number(cell.getValue()) || 0;
-  const newValue = mode === 'set' ? qty : oldValue + qty;
-  cell.setValue(newValue);
-  stamp_(c, it.row, p.operator);
-  log_(c, p.operator, it, { action: p.undo ? '撤銷' : '盤點', status, mode: mode === 'set' ? '覆蓋' : '累加', qty, oldValue, newValue });
-  return { ok: true, row: it.row, status, added: qty, oldValue, newValue, mode };
+/* 依條碼（優先）或列號找到商品列；找不到回傳 null */
+function resolveRow_(params) {
+  let sheet, headerMap, row = null;
+  if (params.barcode && String(params.barcode).trim() !== '') {
+    const loc = locate_(params.barcode);
+    sheet = loc.sheet; headerMap = loc.headerMap; row = loc.row;
+  }
+  if (!sheet) { sheet = getSheet_(); headerMap = getHeaderMap_(sheet); }
+  if (!row && params.row) {
+    const r = Number(params.row);
+    if (r > HEADER_ROW && r <= sheet.getLastRow()) row = r;
+  }
+  return { sheet, headerMap, row };
 }
 
-function create_(p) {
-  const c = ctx_();
-  const name = String(p.name || '').trim(), bc = String(p.barcode || '').trim();
+/* 寫入數量並記錄操作人。params: { barcode?, row?, name?, model?, status, qty, mode, undo? } */
+function saveCount(params, user) {
+  const status = params.status;
+  const qty = Number(params.qty);
+  const mode = params.mode;
+  if (isNaN(qty)) throw new Error('數量無效');
+  if (STATUS_COLUMNS.indexOf(status) === -1) throw new Error('狀態無效：' + status);
+
+  const { sheet, headerMap, row } = resolveRow_(params);
+  if (!row) return { ok: false, message: '找不到要寫入的商品' };
+
+  const col = headerMap[status];
+  if (!col) throw new Error('表頭找不到「' + status + '」欄');
+
+  const cell = sheet.getRange(row, col);
+  const current = Number(cell.getValue()) || 0;
+  const newVal = (mode === 'set') ? qty : current + qty;
+  cell.setValue(newVal);
+
+  // 記下最後盤點時間與人員（盤點進度 / 未盤清單用）
+  sheet.getRange(row, ensureCol_(sheet, headerMap, COUNTED_HEADER)).setValue(new Date());
+  sheet.getRange(row, ensureCol_(sheet, headerMap, COUNTER_HEADER)).setValue(user ? user.name : '');
+
+  appendLog_({
+    user: user ? user.name : '',
+    name: params.name || '', model: params.model || '', barcode: params.barcode || '',
+    status: status, qty: qty, mode: mode, prev: current, next: newVal, row: row,
+    note: params.undo ? '撤銷' : ''
+  });
+
+  return { ok: true, row: row, status: status, previous: current, added: qty, newValue: newVal, mode: mode, user: user ? user.name : '' };
+}
+
+/* 新增商品。params: { barcode?, name, model?, location? } */
+function createProduct(params, user) {
+  const name = String(params.name || '').trim();
+  const barcode = normalizeBarcode_(params.barcode);
   if (!name) throw new Error('請輸入品名');
-  if (bc) {
-    const dup = findByBarcode_(c, bc);
-    if (dup) throw new Error('條碼已存在：第 ' + dup.row + ' 列「' + dup.name + '」');
+  const sheet = getSheet_();
+  const headerMap = getHeaderMap_(sheet);
+  if (barcode) {
+    const dup = locate_(barcode);
+    if (dup.row) throw new Error('條碼已存在於第 ' + dup.row + ' 列');
   }
-  if (!c.col.name) ensureCol_(c, 'name');
-  if (bc && !c.col.barcode) ensureCol_(c, 'barcode');
-  if (p.location) ensureCol_(c, 'location');
-  const row = Math.max(c.sh.getLastRow(), CONFIG.HEADER_ROW) + 1;
-  c.sh.getRange(row, c.col.name).setValue(name);
-  if (c.col.model && p.model) c.sh.getRange(row, c.col.model).setValue(String(p.model).trim());
-  if (bc) c.sh.getRange(row, c.col.barcode).setNumberFormat('@').setValue(bc);   // 存成文字，保留開頭 0
-  if (p.location) c.sh.getRange(row, c.col.location).setValue(String(p.location).trim());
-  CONFIG.STATUSES.forEach(s => { if (c.st[s]) c.sh.getRange(row, c.st[s]).setValue(0); });
-  const it = readRow_(c, row);
-  log_(c, p.operator, it, { action: '新增商品' });
-  return { ok: true, item: it };
+  const row = Math.max(sheet.getLastRow(), HEADER_ROW) + 1;
+  sheet.getRange(row, ensureCol_(sheet, headerMap, NAME_HEADER)).setValue(name);
+  if (params.model) sheet.getRange(row, ensureCol_(sheet, headerMap, MODEL_HEADER)).setValue(String(params.model).trim());
+  if (barcode) sheet.getRange(row, ensureCol_(sheet, headerMap, BARCODE_HEADER)).setNumberFormat('@').setValue(barcode); // 文字格式，保留開頭 0
+  if (params.location) sheet.getRange(row, ensureCol_(sheet, headerMap, LOCATION_HEADER)).setValue(String(params.location).trim());
+  STATUS_COLUMNS.forEach(st => { if (headerMap[st]) sheet.getRange(row, headerMap[st]).setValue(0); });
+
+  const item = readProduct_(sheet, headerMap, row);
+  appendLog_({ user: user.name, name: name, model: item.model, barcode: barcode, row: row, modeText: '新增商品' });
+  return { ok: true, item: item };
 }
 
-function bindBarcode_(p) {
-  const c = ctx_();
-  const bc = String(p.barcode || '').trim();
-  if (!bc) throw new Error('缺少條碼');
-  const it = readRow_(c, Number(p.row));
-  if (!it) throw new Error('找不到第 ' + p.row + ' 列');
-  const dup = findByBarcode_(c, bc);
-  if (dup && dup.row !== it.row) throw new Error('條碼已屬於第 ' + dup.row + ' 列「' + dup.name + '」');
-  if (it.barcode && !sameBarcode_(it.barcode, bc) && !p.force) {
-    throw new Error('此商品已有條碼 ' + it.barcode + '，不會覆蓋');
+/* 把條碼綁定到既有商品。params: { row, barcode, force? } */
+function bindBarcode(params, user) {
+  const barcode = normalizeBarcode_(params.barcode);
+  if (!barcode) throw new Error('缺少條碼');
+  const sheet = getSheet_();
+  const headerMap = getHeaderMap_(sheet);
+  const row = Number(params.row);
+  if (!(row > HEADER_ROW && row <= sheet.getLastRow())) throw new Error('找不到第 ' + params.row + ' 列');
+  const dup = locate_(barcode);
+  if (dup.row && dup.row !== row) throw new Error('條碼已屬於第 ' + dup.row + ' 列');
+  const before = readProduct_(sheet, headerMap, row);
+  if (before.barcode && normalizeBarcode_(before.barcode) !== barcode && !params.force) {
+    throw new Error('此商品已有條碼 ' + before.barcode + '，不會覆蓋');
   }
-  c.sh.getRange(it.row, ensureCol_(c, 'barcode')).setNumberFormat('@').setValue(bc);
-  const out = readRow_(c, it.row);
-  log_(c, p.operator, out, { action: '綁定條碼', note: it.barcode ? '原條碼 ' + it.barcode : '' });
-  return { ok: true, item: out };
+  sheet.getRange(row, ensureCol_(sheet, headerMap, BARCODE_HEADER)).setNumberFormat('@').setValue(barcode);
+  const item = readProduct_(sheet, headerMap, row);
+  appendLog_({ user: user.name, name: item.name, model: item.model, barcode: barcode, row: row, modeText: '綁定條碼',
+    note: before.barcode ? '原條碼 ' + before.barcode : '' });
+  return { ok: true, item: item };
 }
 
-function setLocation_(p) {
-  const c = ctx_();
-  const it = resolveRow_(c, p);
-  const loc = String(p.location || '').trim();
-  c.sh.getRange(it.row, ensureCol_(c, 'location')).setValue(loc);
-  log_(c, p.operator, it, { action: '設定儲位', note: (it.location || '(空)') + ' → ' + (loc || '(空)') });
-  return { ok: true, item: readRow_(c, it.row) };
+/* 設定儲位。params: { barcode?, row, location } */
+function setLocation(params, user) {
+  const { sheet, headerMap, row } = resolveRow_(params);
+  if (!row) throw new Error('找不到這個商品，請重新查詢');
+  const before = readProduct_(sheet, headerMap, row);
+  const loc = String(params.location || '').trim();
+  sheet.getRange(row, ensureCol_(sheet, headerMap, LOCATION_HEADER)).setValue(loc);
+  appendLog_({ user: user.name, name: before.name, model: before.model, barcode: before.barcode, row: row, modeText: '設定儲位',
+    note: (before.location || '(空)') + ' → ' + (loc || '(空)') });
+  return { ok: true, item: readProduct_(sheet, headerMap, row) };
 }
 
-// 開始新一輪盤點：記下開始時間；可選擇先備份再把所有狀態數量歸零
-function startRound_(p) {
-  const c = ctx_();
+/* 開始新一輪盤點：記下開始時間；reset=true 時先備份整張表，再把狀態數量全部歸零 */
+function startRound(params, user) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = getSheet_();
+  const headerMap = getHeaderMap_(sheet);
   const now = new Date();
   let backup = '';
-  if (p.reset) {
+  if (params.reset) {
     backup = '備份_' + Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd_HHmm');
-    c.sh.copyTo(c.ss).setName(backup);
-    const first = CONFIG.HEADER_ROW + 1, n = c.sh.getLastRow() - CONFIG.HEADER_ROW;
-    if (n > 0) CONFIG.STATUSES.forEach(s => {
-      if (c.st[s]) c.sh.getRange(first, c.st[s], n, 1).setValue(0);
+    sheet.copyTo(ss).setName(backup);
+    const n = sheet.getLastRow() - HEADER_ROW;
+    if (n > 0) STATUS_COLUMNS.forEach(st => {
+      if (headerMap[st]) sheet.getRange(HEADER_ROW + 1, headerMap[st], n, 1).setValue(0);
     });
   }
   PropertiesService.getScriptProperties().setProperty('ROUND_START', now.toISOString());
-  log_(c, p.operator, null, { action: '開始新一輪盤點', note: p.reset ? '已歸零，備份於 ' + backup : '未歸零' });
-  return { ok: true, roundStart: now.toISOString(), backup };
+  appendLog_({ user: user.name, modeText: '開始新一輪盤點', note: params.reset ? '已歸零，備份於 ' + backup : '數量未歸零' });
+  return { ok: true, roundStart: now.toISOString(), backup: backup };
 }
