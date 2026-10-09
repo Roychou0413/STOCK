@@ -4,6 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>倉庫盤點掃描</title>
+  <meta name="theme-color" content="#2563eb">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="盤點掃描">
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="dns-prefetch" href="https://unpkg.com">
   <style>
@@ -15,6 +22,11 @@
     body{margin:0;font-family:-apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
       background:var(--bg);color:var(--text);padding:14px;max-width:560px;margin:0 auto;}
     h1{font-size:19px;margin:2px 0 14px;text-align:center;font-weight:800;}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 12px;}
+    .top h1{margin:0;flex:1;text-align:left;}
+    .top .who{font-size:12px;color:var(--muted);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;}
+    button.icon{flex:0 0 auto;width:42px;height:42px;padding:0;font-size:19px;border-radius:12px;
+      background:var(--surface);color:var(--text);border:1.5px solid var(--border);}
     #reader{width:100%;border-radius:14px;overflow:hidden;background:#000;min-height:220px;}
     #reader video{border-radius:14px;display:block;}
     .controls{display:flex;gap:10px;margin:14px 0 4px;}
@@ -67,7 +79,7 @@
     .actions .save{background:var(--ok);flex:1;}
     #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:#fff;
       padding:13px 18px;border-radius:14px;font-size:14px;font-weight:600;opacity:0;transition:.25s;
-      z-index:100;max-width:92%;text-align:center;border-left:5px solid var(--muted);box-shadow:0 6px 20px rgba(0,0,0,.25);}
+      z-index:100;max-width:92%;text-align:center;pointer-events:none;border-left:5px solid var(--muted);box-shadow:0 6px 20px rgba(0,0,0,.25);}
     #toast.show{opacity:1;} #toast.ok{border-left-color:var(--ok);} #toast.err{border-left-color:var(--danger);}
 
     .hist-head{display:flex;align-items:center;justify-content:space-between;margin:22px 0 10px;gap:8px;}
@@ -102,10 +114,57 @@
     .li-name{font-size:14.5px;font-weight:700;line-height:1.3;}
     .li-meta{font-size:11.5px;color:var(--muted);margin-top:2px;font-family:ui-monospace,monospace;}
     .li-qty{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:6px;font-size:12.5px;font-weight:700;}
+    /* 手電筒 */
+    #torchBtn{flex:0 0 auto;width:62px;font-size:20px;padding:0;}
+    #torchBtn.on{background:#fde68a;border-color:#f59e0b;color:#92400e;}
+    /* 離線待上傳 */
+    .queue-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fffbeb;
+      border:1px solid #fde68a;color:#92400e;padding:9px 12px;border-radius:12px;font-size:13.5px;font-weight:600;margin:6px 0;}
+    .queue-bar button.mini{background:#d97706;}
+    /* 本次紀錄：撤銷 / 狀態 */
+    .hi .r{display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
+    .hi .undo{flex:0 0 auto;font-size:12px;padding:5px 10px;border-radius:8px;background:var(--surface);
+      color:var(--text);border:1.5px solid var(--border);font-weight:600;}
+    .hi.undone{opacity:.5;} .hi.undone .n,.hi.undone .q{text-decoration:line-through;}
+    .hi .tag{font-weight:700;margin-left:4px;}
+    .hi .tag.pending{color:#d97706;} .hi .tag.bad{color:var(--danger);} .hi .tag.undone{color:var(--muted);}
+    /* 連續模式 */
+    .cont-row{display:flex;align-items:center;gap:10px;background:var(--surface);border:1.5px solid var(--border);
+      border-radius:12px;padding:9px 12px;margin:4px 0 6px;font-size:14px;font-weight:600;}
+    .cont-row.on{border-color:var(--ok);background:#f0fdf4;}
+    .cont-row label{display:flex;align-items:center;gap:8px;flex:1;}
+    .cont-row input[type=checkbox]{width:20px;height:20px;}
+    .cont-row select{font-size:14px;padding:6px 8px;border-radius:8px;border:1.5px solid var(--border);background:#fff;color:var(--text);}
+    /* 通用表單 */
+    .field{display:block;width:100%;font-size:16px;padding:12px;border-radius:12px;border:1.5px solid var(--border);
+      background:#fff;color:var(--text);margin-bottom:10px;}
+    .sheet .sub{color:var(--muted);font-size:13px;margin:4px 0 0;}
+    .sheet .note{font-size:12.5px;color:var(--muted);margin:6px 2px 0;line-height:1.5;}
+    .info-row{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;color:var(--muted);margin-top:8px;}
+    .info-row b{color:var(--text);}
+    .loc-btn{background:none;border:none;color:var(--primary);font-size:13px;font-weight:700;padding:0;flex:none;}
+    .tabs{display:flex;gap:6px;overflow-x:auto;margin:0 0 8px;padding-bottom:2px;}
+    .tabs button{flex:0 0 auto;font-size:13px;padding:7px 12px;border-radius:999px;background:var(--surface);
+      color:var(--text);border:1.5px solid var(--border);font-weight:600;}
+    .tabs button.on{background:var(--primary);border-color:var(--primary);color:#fff;}
+    .list-tools{display:flex;gap:8px;margin-bottom:8px;align-items:center;}
+    .list-tools select{flex:1;font-size:14px;padding:9px;border-radius:10px;border:1.5px solid var(--border);background:#fff;color:var(--text);}
+    .progress{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:8px;font-size:13px;}
+    .progress .bar{height:8px;background:var(--border);border-radius:99px;overflow:hidden;margin:7px 0 4px;}
+    .progress .bar i{display:block;height:100%;background:var(--ok);}
+    .progress .row{display:flex;justify-content:space-between;gap:8px;align-items:center;}
+    .li-flag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;margin-left:6px;vertical-align:1px;}
+    .li-flag.todo{background:#f3f4f6;color:var(--muted);} .li-flag.okk{background:#dcfce7;color:#166534;}
+    .li-flag.plus{background:#dbeafe;color:#1e40af;} .li-flag.minus{background:#fee2e2;color:#991b1b;}
+    .stale{font-size:12px;color:var(--muted);text-align:center;margin:-2px 0 8px;}
   </style>
 </head>
 <body>
-  <h1>📦 倉庫盤點掃描</h1>
+  <div class="top">
+    <h1>📦 倉庫盤點掃描</h1>
+    <span class="who" id="whoLabel"></span>
+    <button class="icon" onclick="openSettings()" title="設定">⚙</button>
+  </div>
 
   <div id="cfgWarn" class="warn" style="display:none">尚未設定 API 網址：請編輯本檔開頭的 API_URL。</div>
 
@@ -113,11 +172,20 @@
   <div class="controls">
     <button id="startBtn" onclick="startScan()">開始掃描</button>
     <button id="stopBtn" class="ghost" onclick="stopScan()" disabled>停止</button>
+    <button id="torchBtn" class="ghost" onclick="toggleTorch()" style="display:none" title="手電筒">🔦</button>
+  </div>
+  <div class="cont-row" id="contRow">
+    <label><input type="checkbox" id="contToggle" onchange="setContinuous(this.checked)">連續模式（掃一次 +1）</label>
+    <select id="contStatus" onchange="contStatus=this.value"></select>
   </div>
   <div class="hint" id="hint">按「開始掃描」並允許使用相機</div>
+  <div id="queueBar" class="queue-bar" style="display:none">
+    <span id="queueText"></span>
+    <button class="mini" onclick="flushQueue()">立即上傳</button>
+  </div>
 
   <div class="search-box">
-    <input id="searchInput" type="search" enterkeyhint="search" placeholder="沒有條碼?輸入品名或型號搜尋">
+    <input id="searchInput" type="search" enterkeyhint="search" placeholder="輸入條碼數字、品名或型號">
     <button id="searchBtn" onclick="doSearch()">搜尋</button>
   </div>
   <div id="searchResults"></div>
@@ -137,6 +205,7 @@
       <h2 id="mName">—</h2>
       <div class="model" id="mModel"></div>
       <div class="barcode" id="mBarcode"></div>
+      <div class="info-row" id="mInfo"></div>
       <div class="lbl">狀態</div>
       <div class="status-grid" id="statusGrid"></div>
       <div class="lbl">數量</div>
@@ -164,7 +233,66 @@
         <button class="list-close" onclick="closeList()">✕</button>
       </div>
       <input id="listFilter" type="search" class="list-filter" enterkeyhint="search" placeholder="在庫存中篩選：品名 / 型號 / 條碼">
+      <div id="listProgress"></div>
+      <div class="tabs" id="listTabs"></div>
+      <div class="list-tools">
+        <select id="listSort" onchange="listSort=this.value;applyList()">
+          <option value="row">依試算表順序</option>
+          <option value="location">依儲位</option>
+          <option value="name">依品名</option>
+        </select>
+        <button class="mini" onclick="exportReport()">匯出報表</button>
+      </div>
+      <div id="listStale" class="stale"></div>
       <div id="listBody" class="list-body"></div>
+    </div>
+  </div>
+
+  <!-- 查無條碼：新增商品 / 綁定到現有商品 -->
+  <div class="overlay" id="nfOverlay">
+    <div class="sheet">
+      <h2>查無此條碼</h2>
+      <div class="barcode" id="nfBarcode"></div>
+      <div class="mode-row" style="margin-top:14px">
+        <button class="mode-btn on" id="nfTabNew" onclick="nfTab('new')">新增商品<small>建立一筆新品項</small></button>
+        <button class="mode-btn" id="nfTabBind" onclick="nfTab('bind')">綁定現有商品<small>把條碼加到已有品項</small></button>
+      </div>
+      <div id="nfNew" style="margin-top:14px">
+        <input id="nfName" class="field" placeholder="品名（必填）">
+        <input id="nfModel" class="field" placeholder="型號（選填）">
+        <input id="nfLoc" class="field" placeholder="儲位（選填）">
+      </div>
+      <div id="nfBind" style="margin-top:14px;display:none">
+        <div class="search-box" style="margin:0 0 6px">
+          <input id="nfQ" type="search" enterkeyhint="search" placeholder="搜尋品名或型號">
+          <button onclick="nfSearch()">搜尋</button>
+        </div>
+        <div id="nfResults" style="max-height:38vh;overflow-y:auto"></div>
+      </div>
+      <div class="actions">
+        <button class="cancel" onclick="closeNotFound()">取消</button>
+        <button class="save" id="nfSave" onclick="nfCreate()">新增並盤點</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 設定 -->
+  <div class="overlay" id="setOverlay">
+    <div class="sheet">
+      <h2>🔐 登入 / 設定</h2>
+      <div class="sub" id="loginState">尚未登入</div>
+      <div class="lbl">個人密碼</div>
+      <input id="setCode" class="field" type="password" autocomplete="current-password" enterkeyhint="go"
+        placeholder="輸入「使用者」分頁裡你的密碼">
+      <div class="note" id="setInfo"></div>
+      <div class="lbl">本輪盤點</div>
+      <div class="note" id="roundInfo">—</div>
+      <button class="ghost" style="width:100%;margin-top:8px" onclick="startRound()">🔄 開始新一輪盤點</button>
+      <button class="ghost" style="width:100%;margin-top:8px" id="logoutBtn" onclick="logout()">登出這支手機</button>
+      <div class="actions">
+        <button class="cancel" onclick="closeSettings()">關閉</button>
+        <button class="save" id="loginBtn" onclick="login()">登入</button>
+      </div>
     </div>
   </div>
 
@@ -173,8 +301,14 @@
   <script>
     // ===================== 設定 =====================
     const API_URL = 'https://script.google.com/macros/s/AKfycbzTUjakqdeF-j2Yz6x2Z9Ol_R3jDegmvrEJpRa0rHQplOjJ4-vAfjUvfgQGUzc7-pAi7Q/exec';
-    const API_TOKEN = '';
+    // 每人用自己的密碼登入（後端「使用者」分頁），密碼只存在這支手機
     // ==============================================
+
+    // ---- 登入資訊（姓名由後端回傳，密碼 = code）----
+    const SET_KEY='stocktake_settings_v1';
+    let settings={ operator:'', code:'' };
+    try{ Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY)||'{}')); }catch(e){}
+    function saveSettingsLS(){ try{ localStorage.setItem(SET_KEY, JSON.stringify(settings)); }catch(e){} }
 
     // ---- 動態載入外部元件（開頁不再卡住，需要時才下載，並含備援 CDN）----
     const QR_LIBS = [
@@ -217,22 +351,48 @@
       }finally{ clearTimeout(timer); }
     }
 
-    async function apiLookup(barcode){
-      const u = API_URL + '?action=lookup&barcode=' + encodeURIComponent(barcode)
-              + (API_TOKEN ? '&token=' + encodeURIComponent(API_TOKEN) : '');
-      return await fetchJSON(u);
+    // ---- API ----
+    function apiGet(action, params, timeoutMs){
+      const q=Object.assign({action}, params||{});
+      if(settings.code && q.code===undefined) q.code=settings.code;
+      const qs=Object.keys(q).map(k=>k+'='+encodeURIComponent(q[k])).join('&');
+      return fetchJSON(API_URL+'?'+qs, null, timeoutMs).then(checkAuth);
     }
-    async function apiSearch(q){
-      const u = API_URL + '?action=search&q=' + encodeURIComponent(q)
-              + (API_TOKEN ? '&token=' + encodeURIComponent(API_TOKEN) : '');
-      return await fetchJSON(u);
-    }
-    async function apiSave(item, status, qty, mode){
-      return await fetchJSON(API_URL, {
+    function apiPost(body){
+      return fetchJSON(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action:'save', barcode:item.barcode||'', row:item.row, status, qty, mode, token: API_TOKEN })
-      });
+        body: JSON.stringify(Object.assign({ code: settings.code }, body))
+      }).then(checkAuth);
+    }
+    // 後端回「未授權」時，跳出登入視窗
+    let authPrompted=0;
+    function checkAuth(r){
+      if(r && r.needAuth && Date.now()-authPrompted>5000){
+        authPrompted=Date.now();
+        setTimeout(()=>{ openSettings(); toast(settings.code?'密碼錯誤或已停用，請重新登入':'請先登入','err'); }, 50);
+      }
+      return r;
+    }
+    const apiLookup = barcode => apiGet('lookup', {barcode});
+    const apiSearch = q => apiGet('search', {q});
+    function apiSave(item, status, qty, mode, extra){
+      return apiPost(Object.assign({ action:'save', barcode:item.barcode||'', row:item.row, name:item.name||'', model:item.model||'',
+        status, qty, mode }, extra||{}));
+    }
+
+    // ---- 後端版本偵測：v2 才有新增商品、儲位、差異報表、開始新一輪 ----
+    let backendVersion=0;   // 0 = 尚未得知
+    function needV2(){
+      if(backendVersion>=2) return true;
+      toast('這個功能需要更新後端（apps-script/Code.gs），請參考 README','err');
+      return false;
+    }
+    function checkBackend(){   // 不帶 action 的存活測試（免密碼），v2 會回傳 version
+      fetchJSON(API_URL, null, 15000).then(r=>{
+        backendVersion = (r && r.version) ? r.version : 1;
+        renderSetInfo();
+      }).catch(()=>{});
     }
 
     const STATUS_META = [
@@ -284,6 +444,7 @@
     // ---- 掃描 ----
     async function startScan(){
       if(scanning) return;
+      initAudio();
       if(typeof Html5Qrcode==='undefined'){
         setHint('載入相機元件中…',true);
         try{ await loadScript(QR_LIBS); }catch(e){ setHint('相機元件載入失敗，請檢查網路後重試'); return; }
@@ -299,49 +460,121 @@
       try{
         await qr.start({facingMode:'environment'},cfg,onScan,()=>{});
         scanning=true; startBtn.disabled=true; stopBtn.disabled=false;
+        setupTorch();
         setHint('將條碼對準取景框');
-      }catch(e){setHint('無法啟動相機：'+e);}
+      }catch(e){setHint('無法啟動相機：'+esc(e));}
     }
     async function stopScan(){
       if(!scanning||!qr) return;
       try{await qr.stop();}catch(e){}
       scanning=false; startBtn.disabled=false; stopBtn.disabled=true;
+      torchOn=false; paintTorch(); torchBtn.style.display='none';
       setHint('已停止掃描');
     }
     function onScan(text){
       const now=Date.now();
-      if(text===last.code && now-last.at<2500) return;
+      if(text===last.code && now-last.at<(continuous?1500:2500)) return;
       last={code:text,at:now};
       if(qr){try{qr.pause(true);}catch(e){}}
+      feedback('scan');
       setHint('查詢商品中…',true);
       apiLookup(text).then(res=>{
-        if(!res || res.error){ toast(res && res.error ? res.error : '查詢失敗','err'); setHint('請繼續掃描'); resume(); return; }
-        if(!res.found){ toast('找不到條碼 '+res.barcode,'err'); setHint('查無此條碼，可改用下方搜尋'); resume(); return; }
+        if(!res || res.error){ feedback('err'); toast(res && res.error ? res.error : '查詢失敗','err'); setHint('請繼續掃描'); resume(); return; }
+        if(!res.found){ feedback('err'); notFound(res.barcode||text); return; }
+        if(continuous){ quickAdd(res); return; }
         openProduct(res);
-      }).catch(err=>{setHint('查詢失敗：'+err.message);resume();});
+      }).catch(err=>{feedback('err');setHint('查詢失敗：'+esc(err.message));resume();});
     }
 
-    // ---- 手動搜尋 ----
+    // ---- 連續模式：掃到就直接 +1，不跳視窗 ----
+    let continuous=false, contStatus='新品';
+    function setContinuous(on){
+      continuous=on;
+      document.getElementById('contRow').classList.toggle('on',on);
+      initAudio();
+      toast(on?'連續模式：每掃一次「'+contStatus+'」+1':'已關閉連續模式');
+    }
+    function quickAdd(res){
+      submitJob(makeJob(res, contStatus, 1, 'add'), { silentQueue:true });
+      setHint('連續模式：已 +1，請掃下一件');
+      resume();
+    }
+
+    // ---- 手電筒（僅部分 Android 瀏覽器支援；不支援時不顯示按鈕）----
+    let torchOn=false;
+    function setupTorch(){
+      torchOn=false; paintTorch();
+      let ok=false;
+      try{ const caps=qr.getRunningTrackCapabilities(); ok=!!(caps && caps.torch); }catch(e){}
+      torchBtn.style.display = ok ? '' : 'none';
+    }
+    function paintTorch(){ torchBtn.classList.toggle('on', torchOn); }
+    async function toggleTorch(){
+      if(!qr||!scanning) return;
+      const want=!torchOn;
+      try{ await qr.applyVideoConstraints({advanced:[{torch:want}]}); torchOn=want; paintTorch(); }
+      catch(e){ toast('無法切換手電筒','err'); }
+    }
+
+    // ---- 提示音與震動（iPhone 不支援震動，會只有聲音）----
+    let audioCtx=null;
+    function initAudio(){   // 必須在使用者點擊時呼叫，瀏覽器才允許出聲
+      try{
+        if(!audioCtx){ const AC=window.AudioContext||window.webkitAudioContext; if(AC) audioCtx=new AC(); }
+        if(audioCtx && audioCtx.state==='suspended') audioCtx.resume();
+      }catch(e){}
+    }
+    function beep(freq,ms,delay){
+      if(!audioCtx) return;
+      try{
+        const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+        o.type='square'; o.frequency.value=freq; g.gain.value=0.06;
+        o.connect(g); g.connect(audioCtx.destination);
+        const t=audioCtx.currentTime+(delay||0)/1000;
+        o.start(t); o.stop(t+ms/1000);
+      }catch(e){}
+    }
+    function vib(p){ try{ if(navigator.vibrate) navigator.vibrate(p); }catch(e){} }
+    function feedback(kind){
+      if(kind==='scan'){ beep(1800,80); vib(60); }
+      else if(kind==='ok'){ beep(1200,70); beep(1700,90,90); vib(40); }
+      else { beep(260,240); vib([120,80,120]); }
+    }
+
+    // ---- 手動搜尋（也可直接輸入條碼數字）----
     document.getElementById('searchInput').addEventListener('keydown', function(e){
       if(e.key==='Enter'){ e.preventDefault(); doSearch(); this.blur(); }
     });
-    function doSearch(){
+    const looksLikeBarcode = q => /^[0-9]{6,20}$/.test(q);
+    async function doSearch(){
       const q = document.getElementById('searchInput').value.trim();
       const box = document.getElementById('searchResults');
       if(!q){ box.innerHTML=''; return; }
       box.innerHTML = '<div class="sr-hint"><span class="spin"></span>搜尋中…</div>';
-      apiSearch(q).then(r=>{
-        if(!r || r.error){ box.innerHTML='<div class="sr-hint">搜尋失敗：'+((r&&r.error)||'')+'</div>'; return; }
+      try{
+        if(looksLikeBarcode(q)){
+          const res=await apiLookup(q);
+          if(res && res.found){ box.innerHTML=''; document.getElementById('searchInput').value=''; openProduct(res); return; }
+        }
+        const r=await apiSearch(q);
+        if(!r || r.error){ box.innerHTML='<div class="sr-hint">搜尋失敗：'+esc((r&&r.error)||'')+'</div>'; return; }
         searchResults = r.results || [];
-        if(!searchResults.length){ box.innerHTML='<div class="sr-hint">找不到符合「'+esc(q)+'」的商品</div>'; return; }
-        box.innerHTML = searchResults.map((it,idx)=>
-          '<button class="sr-item" onclick="pickResult('+idx+')">'
-          +'<div class="sr-name">'+esc(it.name||'(未命名)')+'</div>'
-          +'<div class="sr-meta">'+(it.model?('型號 '+esc(it.model)):'')
-          +(it.barcode?('　·　條碼 '+esc(it.barcode)):'　·　無條碼')+'　·　第 '+it.row+' 列</div>'
-          +'</button>'
-        ).join('');
-      }).catch(err=>{ box.innerHTML='<div class="sr-hint">搜尋失敗：'+err.message+'</div>'; });
+        if(!searchResults.length){
+          box.innerHTML='<div class="sr-hint">找不到符合「'+esc(q)+'」的商品'
+            +(looksLikeBarcode(q)&&backendVersion!==1?'<br><button class="mini" style="margin-top:8px" onclick="notFound(\''+esc(q)+'\')">以此條碼新增 / 綁定商品</button>':'')
+            +'</div>';
+          return;
+        }
+        box.innerHTML = searchResults.map((it,idx)=>itemButton(it,'pickResult('+idx+')','sr')).join('');
+      }catch(err){ box.innerHTML='<div class="sr-hint">搜尋失敗：'+esc(err.message)+'</div>'; }
+    }
+    function itemButton(it, onclick, cls){
+      return '<button class="'+cls+'-item" onclick="'+onclick+'">'
+        +'<div class="'+cls+'-name">'+esc(it.name||'(未命名)')+'</div>'
+        +'<div class="'+cls+'-meta">'+(it.model?('型號 '+esc(it.model)):'')
+        +(it.barcode?('　·　條碼 '+esc(it.barcode)):'　·　無條碼')
+        +(it.location?('　·　儲位 '+esc(it.location)):'')+'　·　第 '+it.row+' 列</div>'
+        +'</button>';
     }
     function pickResult(idx){
       const it = searchResults[idx];
@@ -351,23 +584,171 @@
       openProduct(it);
     }
 
-    // ---- 查看全部庫存 ----
-    let listData=[], currentListView=[];
-    async function apiList(){
-      const u = API_URL + '?action=list' + (API_TOKEN?'&token='+encodeURIComponent(API_TOKEN):'');
-      return await fetchJSON(u, null, 30000);
+    // ---- 查無條碼：新增商品 / 綁定現有商品 ----
+    let nfCode='', nfMode='new', nfList=[];
+    function notFound(code){
+      if(backendVersion===1){   // 舊版後端沒有新增功能
+        toast('找不到條碼 '+code,'err'); setHint('查無此條碼，可改用下方搜尋'); resume(); return;
+      }
+      nfCode=code;
+      document.getElementById('nfBarcode').textContent='條碼 '+code;
+      ['nfName','nfModel','nfLoc','nfQ'].forEach(id=>document.getElementById(id).value='');
+      document.getElementById('nfResults').innerHTML='';
+      nfTab('new');
+      document.getElementById('nfOverlay').classList.add('show');
+      setHint('查無此條碼');
     }
+    function nfTab(m){
+      nfMode=m;
+      document.getElementById('nfTabNew').classList.toggle('on',m==='new');
+      document.getElementById('nfTabBind').classList.toggle('on',m==='bind');
+      document.getElementById('nfNew').style.display=m==='new'?'':'none';
+      document.getElementById('nfBind').style.display=m==='bind'?'':'none';
+      document.getElementById('nfSave').style.display=m==='new'?'':'none';
+    }
+    function closeNotFound(){ document.getElementById('nfOverlay').classList.remove('show'); resume(); setHint('將條碼對準取景框'); }
+    document.getElementById('nfQ').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); nfSearch(); this.blur(); } });
+    async function nfCreate(){
+      if(!needV2()) return;
+      const name=document.getElementById('nfName').value.trim();
+      if(!name){ toast('請輸入品名','err'); return; }
+      const btn=document.getElementById('nfSave'); btn.disabled=true; btn.textContent='新增中…';
+      try{
+        const r=await apiPost({ action:'create', barcode:nfCode, name,
+          model:document.getElementById('nfModel').value.trim(), location:document.getElementById('nfLoc').value.trim() });
+        if(r && r.ok){
+          feedback('ok'); toast('✓ 已新增「'+name+'」（第 '+r.item.row+' 列）','ok');
+          patchList(r.item, true);
+          document.getElementById('nfOverlay').classList.remove('show');
+          openProduct(r.item);
+        }else{ feedback('err'); toast((r&&r.error)||'新增失敗','err'); }
+      }catch(e){ feedback('err'); toast('新增失敗：'+e.message,'err'); }
+      finally{ btn.disabled=false; btn.textContent='新增並盤點'; }
+    }
+    async function nfSearch(){
+      const q=document.getElementById('nfQ').value.trim(), box=document.getElementById('nfResults');
+      if(!q) return;
+      box.innerHTML='<div class="sr-hint"><span class="spin"></span>搜尋中…</div>';
+      try{
+        const r=await apiSearch(q);
+        if(!r||r.error){ box.innerHTML='<div class="sr-hint">搜尋失敗：'+esc((r&&r.error)||'')+'</div>'; return; }
+        nfList=r.results||[];
+        box.innerHTML = nfList.length ? nfList.map((it,i)=>itemButton(it,'nfBind('+i+')','sr')).join('')
+          : '<div class="sr-hint">找不到符合的商品</div>';
+      }catch(e){ box.innerHTML='<div class="sr-hint">搜尋失敗：'+esc(e.message)+'</div>'; }
+    }
+    async function nfBind(i){
+      const it=nfList[i]; if(!it || !needV2()) return;
+      const msg = it.barcode
+        ? '「'+it.name+'」已有條碼 '+it.barcode+'。\n確定改成 '+nfCode+'?（原條碼會被取代）'
+        : '把條碼 '+nfCode+' 綁定到「'+it.name+'」?';
+      if(!confirm(msg)) return;
+      try{
+        const r=await apiPost({ action:'bindBarcode', row:it.row, barcode:nfCode, force:!!it.barcode });
+        if(r && r.ok){
+          feedback('ok'); toast('✓ 已綁定條碼到「'+r.item.name+'」','ok');
+          patchList(r.item);
+          document.getElementById('nfOverlay').classList.remove('show');
+          openProduct(r.item);
+        }else{ feedback('err'); toast((r&&r.error)||'綁定失敗','err'); }
+      }catch(e){ feedback('err'); toast('綁定失敗：'+e.message,'err'); }
+    }
+
+    // ---- 全部庫存（含快取、未盤/差異篩選、進度）----
+    const LIST_CACHE_KEY='stocktake_list_cache_v1';
+    let listData=[], listInfo={ roundStart:'', columns:{}, version:1, t:0 }, currentListView=[];
+    let listTab='all', listSort='row';
+    try{ const c=JSON.parse(localStorage.getItem(LIST_CACHE_KEY)||'null'); if(c){ listData=c.data||[]; listInfo=c.info||listInfo; } }catch(e){}
+    function saveListCache(){
+      try{ localStorage.setItem(LIST_CACHE_KEY, JSON.stringify({ data:listData, info:listInfo })); }catch(e){}
+    }
+    const totalQty = it => STATUS_META.reduce((a,sm)=>a+(Number((it.quantities||{})[sm.name])||0),0);
+    function isCounted(it){
+      if(!it.lastCounted) return false;
+      if(!listInfo.roundStart) return true;
+      return new Date(it.lastCounted) >= new Date(listInfo.roundStart);
+    }
+    function diffOf(it){ return (it.book==null) ? null : totalQty(it) - it.book; }
+    function flagOf(it){
+      if(listInfo.version<2) return '';
+      if(!isCounted(it)) return 'todo';
+      const d=diffOf(it);
+      if(d==null || !listInfo.columns.book) return 'okk';
+      return d>0 ? 'plus' : d<0 ? 'minus' : 'okk';
+    }
+    const FLAG_TEXT={ todo:'未盤', okk:'已盤', plus:'盤盈', minus:'盤虧' };
+    function flagText(it){
+      const f=flagOf(it); if(!f) return '';
+      if(f==='okk' && listInfo.columns.book && it.book!=null) return '相符';
+      return FLAG_TEXT[f];
+    }
+
     function openList(){
       document.getElementById('listOverlay').classList.add('show');
       document.getElementById('listFilter').value='';
       const body=document.getElementById('listBody');
-      body.innerHTML='<div class="sr-hint"><span class="spin"></span>載入庫存中…</div>';
-      apiList().then(r=>{
-        if(!r||r.error){ body.innerHTML='<div class="sr-hint">載入失敗：'+((r&&r.error)||'')+'</div>'; return; }
-        listData=r.results||[]; renderList(listData);
-      }).catch(err=>{ body.innerHTML='<div class="sr-hint">載入失敗：'+err.message+'</div>'; });
+      if(listData.length){
+        applyList();
+        document.getElementById('listStale').innerHTML='<span class="spin"></span>顯示上次資料（'+fmtTime(listInfo.t)+'），更新中…';
+      }else{
+        body.innerHTML='<div class="sr-hint"><span class="spin"></span>載入庫存中…</div>';
+      }
+      apiGet('list', null, 30000).then(r=>{
+        if(!r||r.error){ listLoadFail((r&&r.error)||''); return; }
+        listData=r.results||[];
+        listInfo={ roundStart:r.roundStart||'', columns:r.columns||{}, version:r.version||1, t:Date.now() };
+        if(r.version) backendVersion=Math.max(backendVersion, r.version);
+        saveListCache(); applyList();
+        document.getElementById('listStale').textContent='';
+      }).catch(err=>listLoadFail(err.message));
     }
+    function listLoadFail(msg){
+      if(listData.length){ document.getElementById('listStale').textContent='⚠ 更新失敗（'+msg+'），顯示的是 '+fmtTime(listInfo.t)+' 的資料'; }
+      else document.getElementById('listBody').innerHTML='<div class="sr-hint">載入失敗：'+esc(msg)+'</div>';
+    }
+    function fmtTime(t){ return t ? new Date(t).toLocaleString('zh-TW',{hour12:false,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
     function closeList(){ document.getElementById('listOverlay').classList.remove('show'); }
+
+    function renderProgress(){
+      const box=document.getElementById('listProgress');
+      if(listInfo.version<2 || !listData.length){
+        box.innerHTML = listInfo.version<2 && listData.length
+          ? '<div class="progress">更新後端（apps-script/Code.gs）後，可看到盤點進度、未盤清單與差異報表。</div>' : '';
+        return;
+      }
+      const done=listData.filter(isCounted).length, all=listData.length, pct=all?Math.round(done*100/all):0;
+      let extra='';
+      if(listInfo.columns.book){
+        const plus=listData.filter(it=>flagOf(it)==='plus').length, minus=listData.filter(it=>flagOf(it)==='minus').length;
+        extra='　盤盈 '+plus+'　盤虧 '+minus;
+      }
+      box.innerHTML='<div class="progress"><div class="row"><b>已盤 '+done+' / '+all+'（'+pct+'%）</b><span>'+extra+'</span></div>'
+        +'<div class="bar"><i style="width:'+pct+'%"></i></div>'
+        +'<div style="color:var(--muted);font-size:12px">本輪開始：'+(listInfo.roundStart?fmtTime(listInfo.roundStart):'尚未設定（到 ⚙ 設定開始新一輪）')+'</div></div>';
+    }
+    function renderTabs(){
+      const tabs=[['all','全部']];
+      if(listInfo.version>=2){ tabs.push(['todo','未盤'],['done','已盤']); }
+      if(listInfo.version>=2 && listInfo.columns.book){ tabs.push(['plus','盤盈'],['minus','盤虧']); }
+      if(!tabs.some(t=>t[0]===listTab)) listTab='all';
+      document.getElementById('listTabs').innerHTML=tabs.map(t=>
+        '<button class="'+(t[0]===listTab?'on':'')+'" onclick="listTab=\''+t[0]+'\';applyList()">'+t[1]+'</button>').join('');
+    }
+    function applyList(){
+      renderProgress(); renderTabs();
+      const q=document.getElementById('listFilter').value.trim().toLowerCase();
+      let items=listData.filter(it=>{
+        if(listTab==='todo' && isCounted(it)) return false;
+        if(listTab==='done' && !isCounted(it)) return false;
+        if((listTab==='plus'||listTab==='minus') && flagOf(it)!==listTab) return false;
+        if(!q) return true;
+        return [it.name,it.model,it.barcode,it.location].some(v=>String(v||'').toLowerCase().includes(q));
+      });
+      const cmp=(a,b)=>String(a||'').localeCompare(String(b||''),'zh-Hant',{numeric:true});
+      if(listSort==='location') items=items.slice().sort((a,b)=>(!a.location)-(!b.location) || cmp(a.location,b.location) || a.row-b.row);
+      else if(listSort==='name') items=items.slice().sort((a,b)=>cmp(a.name,b.name));
+      renderList(items);
+    }
     function renderList(items){
       currentListView=items;
       document.getElementById('listCount').textContent='共 '+items.length+' 筆';
@@ -376,21 +757,49 @@
       body.innerHTML=items.map((it,idx)=>{
         const q=it.quantities||{};
         const badges=STATUS_META.map(sm=>'<span style="color:'+sm.color+'">'+sm.name.charAt(0)+' '+(q[sm.name]??0)+'</span>').join('');
+        const f=flagOf(it), d=diffOf(it);
+        const flag=f?'<span class="li-flag '+f+'">'+flagText(it)+((f==='plus'||f==='minus')?' '+(d>0?'+':'')+d:'')+'</span>':'';
+        const book=(listInfo.columns.book && it.book!=null)?'<span style="color:var(--muted)">帳面 '+it.book+'</span>':'';
         return '<button class="li-item" onclick="pickList('+idx+')">'
-          +'<div class="li-name">'+esc(it.name||'(未命名)')+'</div>'
-          +'<div class="li-meta">'+(it.model?esc(it.model):'')+(it.barcode?('　·　'+esc(it.barcode)):'')+'</div>'
-          +'<div class="li-qty">'+badges+'</div></button>';
+          +'<div class="li-name">'+esc(it.name||'(未命名)')+flag+'</div>'
+          +'<div class="li-meta">'+(it.location?('📍'+esc(it.location)+'　'):'')+(it.model?esc(it.model):'')+(it.barcode?('　·　'+esc(it.barcode)):'')+'</div>'
+          +'<div class="li-qty">'+badges+book+'</div></button>';
       }).join('');
     }
     function pickList(idx){ const it=currentListView[idx]; if(!it) return; closeList(); openProduct(it); }
-    document.getElementById('listFilter').addEventListener('input', function(){
-      const q=this.value.trim().toLowerCase();
-      if(!q){ renderList(listData); return; }
-      renderList(listData.filter(it=>
-        String(it.name||'').toLowerCase().includes(q) ||
-        String(it.model||'').toLowerCase().includes(q) ||
-        String(it.barcode||'').includes(q)));
-    });
+    document.getElementById('listFilter').addEventListener('input', applyList);
+    // 寫入成功後，同步更新快取裡的那一筆
+    function patchList(item, isNew){
+      const i=listData.findIndex(x=>x.row===item.row);
+      if(i>=0) listData[i]=Object.assign({}, listData[i], item);
+      else if(isNew) listData.push(item);
+      else return;
+      saveListCache();
+    }
+    function patchListQty(row, st, newValue){
+      const it=listData.find(x=>x.row===row); if(!it) return;
+      it.quantities=Object.assign({}, it.quantities, {[st]:newValue});
+      it.lastCounted=new Date().toISOString(); it.counter=settings.operator;
+      saveListCache();
+    }
+
+    // ---- 匯出差異報表（目前清單畫面的內容）----
+    async function exportReport(){
+      if(!currentListView.length){ toast('目前清單沒有資料','err'); return; }
+      if(!(await ensureXLSX())) return;
+      const rows=currentListView.map(it=>{
+        const o={ '列':it.row, '品名':it.name, '型號':it.model, '國際條碼':it.barcode, '儲位':it.location||'' };
+        STATUS_META.forEach(sm=>{ o[sm.name]=(it.quantities||{})[sm.name]??0; });
+        o['盤點合計']=totalQty(it);
+        if(listInfo.columns.book){ o['帳面數量']=it.book??''; o['差異']=diffOf(it)??''; }
+        o['盤點狀態']=flagText(it);
+        o['最後盤點時間']=it.lastCounted?new Date(it.lastCounted).toLocaleString('zh-TW',{hour12:false}):'';
+        o['盤點人員']=it.counter||'';
+        return o;
+      });
+      const tabName={all:'全部',todo:'未盤',done:'已盤',plus:'盤盈',minus:'盤虧'}[listTab];
+      writeXLSX(rows, '盤點報表', '盤點報表_'+tabName);
+    }
 
     // ---- 共用：開啟填寫視窗 ----
     function openProduct(res){
@@ -398,96 +807,325 @@
       mName.textContent = res.name || '(未命名商品)';
       mModel.textContent = res.model ? ('型號：'+res.model) : '';
       mBarcode.textContent = (res.barcode ? ('條碼 '+res.barcode) : '無條碼') + '　·　第 '+res.row+' 列';
+      renderProductInfo();
       STATUS_META.forEach(s=>{
         const el=document.getElementById('cur-'+s.name);
-        if(el) el.textContent='目前 '+(res.quantities[s.name]??0);
+        if(el) el.textContent='目前 '+((res.quantities||{})[s.name]??0);
       });
       qtyInput.value=1; selectStatus('新品');
       overlay.classList.add('show');
       setHint('填寫數量與狀態');
     }
+    function renderProductInfo(){
+      const r=product, parts=[];
+      parts.push('📍 儲位 <b>'+(r.location?esc(r.location):'未設定')+'</b>'+(backendVersion!==1?' <button class="loc-btn" onclick="editLocation()">編輯</button>':''));
+      if(r.book!=null && r.book!==undefined) parts.push('帳面 <b>'+r.book+'</b>');
+      if(r.lastCounted) parts.push('上次盤點 '+fmtTime(r.lastCounted)+(r.counter?'（'+esc(r.counter)+'）':''));
+      document.getElementById('mInfo').innerHTML=parts.join('');
+    }
+    async function editLocation(){
+      if(!product || !needV2()) return;
+      const p=product;
+      const v=prompt('「'+(p.name||'')+'」的儲位', p.location||'');
+      if(v===null) return;
+      try{
+        const r=await apiPost({ action:'setLocation', row:p.row, barcode:p.barcode||'', location:v.trim() });
+        if(r && r.ok){
+          if(product===p){ product.location=r.item.location; renderProductInfo(); }
+          patchList(r.item); toast('✓ 儲位已更新','ok');
+        }else toast((r&&r.error)||'更新失敗','err');
+      }catch(e){ toast('更新失敗：'+e.message,'err'); }
+    }
     function resume(){if(qr&&scanning){try{qr.resume();}catch(e){}}}
     function closeModal(){overlay.classList.remove('show');product=null;resume();setHint('將條碼對準取景框');}
 
+    function finishModal(){ overlay.classList.remove('show'); product=null; resume(); setHint('將條碼對準取景框'); }
+    function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+    // 只有「請求根本沒送出去」才算網路錯誤，可安全暫存重送；逾時可能已寫入，不自動重送以免重複累加
+    function isNetErr(e){ return !navigator.onLine || (e && e.name==='TypeError'); }
+
+    function makeJob(p, st, qty, md){
+      return { id:uid(), item:{barcode:p.barcode||'', row:p.row, name:p.name||'', model:p.model||''}, name:p.name||p.barcode||'', model:p.model||'',
+        status:st, qty, mode:md, prev:(p.quantities && p.quantities[st]) ?? 0, operator:settings.operator, t:Date.now() };
+    }
     function save(){
       if(!product) return;
+      initAudio();
       const qty=parseInt(qtyInput.value,10);
       if(isNaN(qty)||qty<0){toast('請輸入有效數量','err');return;}
-      saveBtn.disabled=true; saveBtn.textContent='儲存中…';
-      const p=product;
-      apiSave(p,status,qty,mode).then(r=>{
-        saveBtn.disabled=false; saveBtn.textContent='存入表單';
+      submitJob(makeJob(product, status, qty, mode), { modal:true });
+    }
+    // 送出一筆寫入：成功 → 紀錄；沒網路 → 暫存；已有暫存 → 排隊
+    function submitJob(job, opt){
+      opt=opt||{};
+      const done=()=>{ if(opt.modal) finishModal(); };
+      if(queue.length){
+        enqueue(job); feedback('ok'); toast('已加入待上傳（共 '+queue.length+' 筆）','ok');
+        done(); flushQueue(); return;
+      }
+      if(opt.modal){ saveBtn.disabled=true; saveBtn.textContent='儲存中…'; }
+      const unbusy=()=>{ if(opt.modal){ saveBtn.disabled=false; saveBtn.textContent='存入表單'; } };
+      apiSave(job.item, job.status, job.qty, job.mode).then(r=>{
+        unbusy();
         if(r && r.ok){
-          toast('✓ '+(p.name||p.barcode)+'　'+r.status+' '+(r.mode==='set'?'設為 ':'+')+r.added+' → '+r.newValue,'ok');
-          addHist(p,r);
-          overlay.classList.remove('show'); product=null; resume(); setHint('將條碼對準取景框');
-        }else{ toast((r&&(r.message||r.error))||'儲存失敗','err'); }
-      }).catch(err=>{ saveBtn.disabled=false; saveBtn.textContent='存入表單'; toast('儲存失敗：'+err.message,'err'); });
+          feedback('ok');
+          toast('✓ '+job.name+'　'+r.status+' '+(r.mode==='set'?'設為 ':'+')+r.added+' → '+r.newValue,'ok');
+          addHist(job,r); patchListQty(r.row ?? job.item.row, r.status, r.newValue);
+          done();
+        }else{ feedback('err'); toast((r&&(r.message||r.error))||'儲存失敗','err'); }
+      }).catch(err=>{
+        unbusy();
+        if(isNetErr(err)){
+          enqueue(job); feedback('ok');
+          toast('網路不通，已暫存，恢復連線後自動上傳','ok');
+          done();
+        }else{
+          feedback('err');
+          toast('儲存失敗：'+err.message+'（可能已寫入，請重新查詢確認數量）','err');
+        }
+      });
     }
 
     // ---- 本次紀錄（存 localStorage，避免不小心重整就消失）----
     const HIST_KEY='stocktake_hist_v1';
     let hist=[];
-    loadHist(); renderHist();
+    // ---- 離線待上傳佇列 ----
+    const QUEUE_KEY='stocktake_queue_v1';
+    let queue=[], flushing=false;
+    loadHist(); loadQueue(); renderHist(); renderQueue();
 
     function loadHist(){
       try{ const raw=localStorage.getItem(HIST_KEY);
-        if(raw){ hist=JSON.parse(raw).map(h=>({...h, t:new Date(h.t)})); } }catch(e){ hist=[]; }
+        if(raw){ hist=JSON.parse(raw).map(h=>{
+          const o={...h, t:new Date(h.t)};
+          if(!o.id) o.id=uid();
+          if(o.prev===undefined) o.prev = (o.mode==='add' && o.newVal!=null) ? o.newVal-o.added : null;  // 舊版紀錄
+          return o; }); } }catch(e){ hist=[]; }
     }
     function saveHistLS(){ try{ localStorage.setItem(HIST_KEY, JSON.stringify(hist)); }catch(e){} }
-    function addHist(p,r){
-      hist.unshift({ name:p.name||p.barcode||'', model:p.model||'', barcode:p.barcode||'', row:r.row,
-        status:r.status, added:r.added, newVal:r.newValue, mode:r.mode, t:new Date() });
+    function loadQueue(){ try{ const raw=localStorage.getItem(QUEUE_KEY); queue = raw ? JSON.parse(raw) : []; }catch(e){ queue=[]; } }
+    function saveQueueLS(){ try{ localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); }catch(e){} }
+
+    function prevFrom(job,r){
+      if(r.previous!=null) return r.previous;
+      if(r.oldValue!=null) return r.oldValue;
+      return r.mode==='set' ? job.prev : r.newValue - r.added;
+    }
+    function addHist(job,r){
+      hist.unshift({ id:job.id, name:job.name, model:job.model, barcode:job.item.barcode, row:r.row ?? job.item.row,
+        status:r.status, added:r.added, newVal:r.newValue, prev:prevFrom(job,r), mode:r.mode, operator:job.operator||'', t:new Date() });
       saveHistLS(); renderHist();
+    }
+    function enqueue(job){
+      queue.push(job); saveQueueLS();
+      hist.unshift({ id:job.id, name:job.name, model:job.model, barcode:job.item.barcode, row:job.item.row,
+        status:job.status, added:job.qty, newVal:null, prev:null, mode:job.mode, operator:job.operator||'', pending:true, t:new Date(job.t) });
+      saveHistLS(); renderHist(); renderQueue();
+    }
+    function renderQueue(){
+      const bar=document.getElementById('queueBar');
+      if(!queue.length){ bar.style.display='none'; return; }
+      bar.style.display='flex';
+      document.getElementById('queueText').textContent='⏳ 有 '+queue.length+' 筆待上傳'+(navigator.onLine?'':'（目前離線）');
+    }
+    async function flushQueue(){
+      if(flushing || !queue.length) return;
+      flushing=true; let done=0;
+      document.getElementById('queueText').innerHTML='<span class="spin"></span>上傳中…';
+      try{
+        while(queue.length){
+          const job=queue[0];
+          const h=hist.find(x=>x.id===job.id);
+          let r;
+          try{ r=await apiSave(job.item, job.status, job.qty, job.mode); }
+          catch(e){
+            if(isNetErr(e)) break;                         // 還是沒網路：保留，下次再試
+            queue.shift();                                 // 逾時：不確定是否已寫入，不再重送
+            if(h){ h.pending=false; h.uncertain=true; }
+            toast('「'+job.name+'」上傳逾時，請重新查詢確認數量','err'); feedback('err');
+            continue;
+          }finally{ saveQueueLS(); }
+          if(r && r.needAuth) break;                       // 密碼失效：保留，重新登入後再上傳
+          queue.shift();
+          if(r && r.ok){
+            done++;
+            if(h){ Object.assign(h,{ pending:false, status:r.status, added:r.added, newVal:r.newValue, mode:r.mode,
+              prev:prevFrom(job,r), row:r.row ?? h.row }); }
+            patchListQty(r.row ?? job.item.row, r.status, r.newValue);
+          }else{
+            if(h){ h.pending=false; h.failed=(r&&(r.message||r.error))||'儲存失敗'; }
+            toast('「'+job.name+'」上傳失敗：'+((r&&(r.message||r.error))||''),'err'); feedback('err');
+          }
+        }
+      }finally{
+        flushing=false; saveQueueLS(); saveHistLS(); renderHist(); renderQueue();
+      }
+      if(done){ toast('✓ 已補上傳 '+done+' 筆'+(queue.length?'，尚有 '+queue.length+' 筆':''),'ok'); feedback('ok'); }
+    }
+    window.addEventListener('online', ()=>{ renderQueue(); flushQueue(); });
+    window.addEventListener('offline', renderQueue);
+    setInterval(()=>{ if(queue.length && navigator.onLine) flushQueue(); }, 30000);
+    if(queue.length && navigator.onLine) setTimeout(flushQueue, 1500);
+
+    // ---- 撤銷：把該狀態的數量設回寫入前的值 ----
+    async function undoHist(id){
+      const h=hist.find(x=>x.id===id);
+      if(!h || h.undone || h.busy) return;
+      initAudio();
+      if(h.pending){
+        if(!confirm('取消這筆尚未上傳的紀錄?')) return;
+        if(flushing && queue.length && queue[0].id===id){ toast('這筆正在上傳，請稍後再撤銷','err'); return; }
+        queue=queue.filter(j=>j.id!==id); saveQueueLS();
+        h.pending=false; h.undone=true; saveHistLS(); renderHist(); renderQueue();
+        toast('已取消這筆待上傳紀錄','ok'); return;
+      }
+      if(h.prev==null){ toast('此筆缺少寫入前數量，無法撤銷','err'); return; }
+      if(!confirm('撤銷「'+h.name+'」'+h.status+'：\n數量將由 '+h.newVal+' 還原為 '+h.prev
+        +'\n\n（若之後有人再修改過此品項，會被這個數字覆蓋）')) return;
+      h.busy=true; renderHist();
+      try{
+        const r=await apiSave({barcode:h.barcode, row:h.row, name:h.name, model:h.model}, h.status, h.prev, 'set', { undo:true });
+        if(r && r.ok){
+          h.undone=true; feedback('ok'); patchListQty(r.row ?? h.row, h.status, r.newValue);
+          toast('↩ 已撤銷，'+h.status+' 還原為 '+r.newValue,'ok');
+        }else{ feedback('err'); toast('撤銷失敗：'+((r&&(r.message||r.error))||''),'err'); }
+      }catch(e){ feedback('err'); toast('撤銷失敗：'+e.message+(isNetErr(e)?'（請連線後再試）':'（請重新查詢確認數量）'),'err'); }
+      finally{ h.busy=false; saveHistLS(); renderHist(); }
+    }
+
+    function histNote(h){
+      if(h.undone) return '已撤銷';
+      if(h.pending) return '待上傳';
+      if(h.failed) return '上傳失敗：'+h.failed;
+      if(h.uncertain) return '上傳逾時，未確認';
+      return '';
     }
     function renderHist(){
       const box=document.getElementById('histList');
       if(!hist.length){box.innerHTML='<div class="empty">尚無紀錄，掃描或搜尋後會顯示在這裡</div>';return;}
       box.innerHTML=hist.map(h=>{
         const t=h.t.toLocaleTimeString('zh-TW',{hour12:false});
-        const c=meta(h.status).color;
-        return '<div class="hi"><div><div class="n">'+esc(h.name)+'</div>'
-          +'<div class="m"><span class="dot" style="background:'+c+'"></span>'+h.status+'　'+t+(h.mode==='set'?'　覆蓋':'')+'</div></div>'
-          +'<div class="q" style="color:'+c+'">'+(h.mode==='set'?'=':'+')+h.added+' → '+h.newVal+'</div></div>';
+        const c=(meta(h.status)||{color:'#6b7280'}).color;
+        const sign=h.mode==='set'?'=':'+';
+        const note=histNote(h);
+        const tagCls=h.undone?'undone':(h.pending?'pending':'bad');
+        const canUndo=!h.undone && !h.failed && !h.uncertain;
+        return '<div class="hi'+(h.undone?' undone':'')+'"><div><div class="n">'+esc(h.name)+'</div>'
+          +'<div class="m"><span class="dot" style="background:'+c+'"></span>'+esc(h.status)+'　'+t+(h.mode==='set'?'　覆蓋':'')
+          +(note?'<span class="tag '+tagCls+'">　'+esc(note)+'</span>':'')+'</div></div>'
+          +'<div class="r"><div class="q" style="color:'+c+'">'+sign+h.added+(h.newVal!=null?' → '+h.newVal:'')+'</div>'
+          +(canUndo?'<button class="undo" onclick="undoHist(\''+h.id+'\')"'+(h.busy?' disabled':'')+'>'
+            +(h.busy?'撤銷中…':(h.pending?'取消':'↩ 撤銷'))+'</button>':'')
+          +'</div></div>';
       }).join('');
     }
     function clearHist(){
       if(!hist.length) return;
-      if(!confirm('確定清空本次盤點紀錄?（不影響已存入表單的數字）')) return;
+      if(queue.length){ alert('還有 '+queue.length+' 筆待上傳，請等上傳完成後再清空。'); return; }
+      if(!confirm('確定清空本次盤點紀錄?（不影響已存入表單的數字，清空後也無法再撤銷）')) return;
       hist=[]; saveHistLS(); renderHist();
     }
 
     // ---- 匯出 Excel（點了才載入匯出元件）----
+    async function ensureXLSX(){
+      if(typeof XLSX!=='undefined') return true;
+      toast('準備匯出元件中…');
+      try{ await loadScript(XLSX_LIBS); return true; }catch(e){ toast('匯出元件載入失敗，請檢查網路','err'); return false; }
+    }
+    function writeXLSX(rows, sheetName, prefix){
+      try{
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws['!cols'] = Object.keys(rows[0]).map(k=>({wch: Math.max(8, ...rows.slice(0,200).map(r=>String(r[k]??'').length*1.6), k.length*2)}));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        const n=new Date(), pad=x=>String(x).padStart(2,'0');
+        XLSX.writeFile(wb, prefix+'_'+n.getFullYear()+pad(n.getMonth()+1)+pad(n.getDate())+'_'+pad(n.getHours())+pad(n.getMinutes())+'.xlsx');
+        toast('已匯出 '+rows.length+' 筆，請至「檔案」App 查看','ok');
+      }catch(e){ toast('匯出失敗：'+e.message,'err'); }
+    }
     async function exportExcel(){
       if(!hist.length){ toast('目前沒有紀錄可匯出','err'); return; }
-      if(typeof XLSX==='undefined'){
-        toast('準備匯出元件中…');
-        try{ await loadScript(XLSX_LIBS); }catch(e){ toast('匯出元件載入失敗，請檢查網路','err'); return; }
-      }
+      if(!(await ensureXLSX())) return;
       const rows = hist.slice().reverse().map(h=>({
         '時間': h.t.toLocaleString('zh-TW',{hour12:false}),
+        '盤點人員': h.operator||'',
         '品名': h.name,
         '型號': h.model,
         '國際條碼': h.barcode,
         '狀態': h.status,
         '本次數量': h.added,
         '寫入方式': h.mode==='set'?'覆蓋':'累加',
-        '寫入後數量': h.newVal,
-        '試算表列': h.row
+        '寫入後數量': h.newVal ?? '',
+        '試算表列': h.row,
+        '備註': histNote(h)
       }));
-      try{
-        const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [{wch:19},{wch:24},{wch:16},{wch:16},{wch:8},{wch:9},{wch:9},{wch:11},{wch:9}];
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, '盤點紀錄');
-        const n=new Date(), pad=x=>String(x).padStart(2,'0');
-        const fname='盤點紀錄_'+n.getFullYear()+pad(n.getMonth()+1)+pad(n.getDate())+'_'+pad(n.getHours())+pad(n.getMinutes())+'.xlsx';
-        XLSX.writeFile(wb, fname);
-        toast('已匯出 '+rows.length+' 筆，請至「檔案」App 查看','ok');
-      }catch(e){ toast('匯出失敗：'+e.message,'err'); }
+      writeXLSX(rows, '盤點紀錄', '盤點紀錄');
     }
 
-    function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+    // ---- 設定 ----
+    function renderWho(){ document.getElementById('whoLabel').textContent = settings.operator ? '👤 '+settings.operator : ''; }
+    function renderSetInfo(){
+      const v = backendVersion===0 ? '檢查中…' : backendVersion>=2 ? '新版（v'+backendVersion+'）' : '舊版（新增商品、儲位、差異報表需要更新 Code.gs）';
+      document.getElementById('setInfo').textContent='後端：'+v;
+      document.getElementById('loginState').textContent = settings.code ? '目前登入：'+(settings.operator||'(未命名)') : '尚未登入，請輸入密碼';
+      document.getElementById('logoutBtn').style.display = settings.code ? '' : 'none';
+      document.getElementById('roundInfo').textContent = listInfo.roundStart
+        ? '本輪開始於 '+fmtTime(listInfo.roundStart)+'（以「全部庫存」最後一次載入為準）'
+        : '尚未開始（未盤清單會以「有沒有盤點過」判斷）';
+    }
+    function openSettings(){
+      document.getElementById('setCode').value='';
+      renderSetInfo();
+      document.getElementById('setOverlay').classList.add('show');
+    }
+    function closeSettings(){ document.getElementById('setOverlay').classList.remove('show'); }
+    document.getElementById('setCode').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); login(); } });
+    async function login(){
+      const code=document.getElementById('setCode').value.trim();
+      if(!code){ toast('請輸入密碼','err'); return; }
+      const btn=document.getElementById('loginBtn'); btn.disabled=true; btn.textContent='驗證中…';
+      try{
+        const r=await apiGet('auth', {code});
+        if(r && r.ok){
+          settings.code=code; settings.operator=r.name||''; saveSettingsLS(); renderWho(); closeSettings();
+          feedback('ok'); toast('✓ 歡迎，'+settings.operator,'ok');
+          if(queue.length) flushQueue();
+        }else{ feedback('err'); toast((r&&r.error)||'登入失敗','err'); }
+      }catch(e){ toast('登入失敗：'+e.message,'err'); }
+      finally{ btn.disabled=false; btn.textContent='登入'; }
+    }
+    function logout(){
+      if(queue.length && !confirm('還有 '+queue.length+' 筆待上傳，登出後要重新登入才會上傳。確定登出?')) return;
+      settings.code=''; settings.operator=''; saveSettingsLS(); renderWho(); renderSetInfo();
+      toast('已登出');
+    }
+    async function startRound(){
+      if(!needV2()) return;
+      if(!confirm('開始新一輪盤點?\n之後「未盤」會以現在這個時間點重新計算。')) return;
+      const reset = confirm('要同時把所有商品的狀態數量「歸零」嗎?\n\n按「確定」：先自動備份整張工作表，再全部歸零（適合每次重新點數）\n按「取消」：數量保留不動');
+      if(reset && !confirm('再確認一次：所有狀態數量將歸零（會先備份）。確定?')) return;
+      try{
+        const r=await apiPost({ action:'startRound', reset });
+        if(r && r.ok){
+          listInfo.roundStart=r.roundStart;
+          if(reset) listData.forEach(it=>{ STATUS_META.forEach(sm=>{ (it.quantities=it.quantities||{})[sm.name]=0; }); });
+          saveListCache(); renderSetInfo();
+          toast('✓ 已開始新一輪'+(reset?'，已歸零（備份：'+r.backup+'）':''),'ok');
+        }else toast((r&&r.error)||'失敗','err');
+      }catch(e){ toast('失敗：'+e.message,'err'); }
+    }
+
+    // ---- 初始化 ----
+    document.getElementById('contStatus').innerHTML=STATUS_META.map(sm=>'<option>'+sm.name+'</option>').join('');
+    renderWho();
+    checkBackend();
+    if(!settings.code) setTimeout(openSettings, 300);
+    // PWA：離線也能開啟頁面（只在 https 下啟用）
+    if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
+      window.addEventListener('load', ()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+    }
+
+    function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
     let tt=null;
     function toast(msg,type){const el=document.getElementById('toast');el.textContent=msg;
       el.className='show '+(type||'');clearTimeout(tt);
